@@ -10,7 +10,7 @@ SWITCH_MODULE_SHUTDOWN_FUNCTION(mod_shmed_shutdown);
 
 extern "C"
 {
-SWITCH_MODULE_DEFINITION(mod_medhub, mod_shmed_load, mod_shmed_shutdown, nullptr);
+SWITCH_MODULE_DEFINITION(mod_shmed, mod_shmed_load, mod_shmed_shutdown, nullptr);
 };
 
 const int BUFFER_SIZE = 4096;
