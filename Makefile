@@ -16,7 +16,7 @@ SDK_LIBS=-lpthread -ldl -lanl -D_GLIBCXX_USE_CXX11_ABI=0
 FREESWITCH_LIBS=-L/usr/local/freeswitch/lib -lfreeswitch
 FREESWITCH_INCLUDE=-I/usr/local/freeswitch/include/freeswitch
 
-TARGET_SER=mod_medhub.so
+TARGET_SER=mod_shmed.so
 
 SER_OBJS=$(SER_SRCS:.c=.o)
 
