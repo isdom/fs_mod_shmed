@@ -11,7 +11,7 @@ CFLAGS += -shared -fPIC -O2 -Wall
 SER_SRCS=mod_share_media.cpp
 
 SDK_LIBS=-lpthread -ldl -lanl -D_GLIBCXX_USE_CXX11_ABI=0
-SDK_INCLUDE=-I./third_party/websocket -I./third_party/asio/asio/include -I./third_party/json/include -I./third_party/cppcodec
+# SDK_INCLUDE=-I./third_party/websocket -I./third_party/asio/asio/include -I./third_party/json/include -I./third_party/cppcodec
 
 FREESWITCH_LIBS=-L/usr/local/freeswitch/lib -lfreeswitch
 FREESWITCH_INCLUDE=-I/usr/local/freeswitch/include/freeswitch
@@ -23,7 +23,7 @@ SER_OBJS=$(SER_SRCS:.c=.o)
 default: $(TARGET_SER)
 
 $(TARGET_SER): $(SER_OBJS) $(HEADERS)
-	$(SER_CC) $(CFLAGS) -o $(TARGET_SER) $(SER_OBJS) $(SDK_INCLUDE) $(SDK_LIBS) $(FREESWITCH_INCLUDE) $(FREESWITCH_LIBS)
+	$(SER_CC) $(CFLAGS) -o $(TARGET_SER) $(SER_OBJS) $(SDK_LIBS) $(FREESWITCH_INCLUDE) $(FREESWITCH_LIBS)
 #	$(SER_STRIP) $(TARGET_SER)
 
 #$(SER_OBJS):%.o:%.c
