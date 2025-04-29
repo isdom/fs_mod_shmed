@@ -41,7 +41,7 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_shmed_load) {
 /**
  *  定义shutdown函数，关闭时运行
  */
-SWITCH_MODULE_SHUTDOWN_FUNCTION(mod_medhub_shutdown) {
+SWITCH_MODULE_SHUTDOWN_FUNCTION(mod_shmed_shutdown) {
     switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, " mod_shmed shutdown called\n");
 
     // 清理
