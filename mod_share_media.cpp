@@ -142,6 +142,24 @@ static switch_status_t shmed_on_exchange_media(switch_core_session_t *session) {
     return SWITCH_STATUS_SUCCESS;
 }
 
+static void on_channel_progress_media(switch_event_t *event) {
+    switch_event_header_t *hdr;
+    const char *uuid;
+
+    hdr = switch_event_get_header_ptr(event, "Unique-ID");
+    uuid = hdr->value;
+    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "on_channel_progress_media: uuid: %s", uuid);
+
+    switch_core_session *session  = switch_core_session_force_locate(uuid);
+    if (!session) {
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "on_channel_progress_media: locate session [%s] failed, maybe ended\n",
+                          uuid);
+    } else {
+        shmed_on_exchange_media(session);
+        switch_core_session_rwunlock(session);
+    }
+}
+
 switch_state_handler_table_t shmed_cs_handlers = {
         /*! executed when the state changes to init */
         // switch_state_handler_t on_init;
@@ -204,7 +222,11 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_shmed_load) {
     memset(shm_ptr, 0, BUFFER_SIZE);
 
     // register global state handlers
-    switch_core_add_state_handler(&shmed_cs_handlers);
+    // switch_core_add_state_handler(&shmed_cs_handlers);
+    if (switch_event_bind(modname, SWITCH_EVENT_CHANNEL_PROGRESS_MEDIA, SWITCH_EVENT_SUBCLASS_ANY,
+                          on_channel_progress_media, nullptr) != SWITCH_STATUS_SUCCESS) {
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Bind SWITCH_EVENT_CHANNEL_PROGRESS_MEDIA event failed!\n");
+    }
 
     switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "mod_shmed loaded\n");
 
@@ -218,7 +240,7 @@ SWITCH_MODULE_SHUTDOWN_FUNCTION(mod_shmed_shutdown) {
     switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, " mod_shmed shutdown called\n");
 
     // unregister global state handlers
-    switch_core_remove_state_handler(&shmed_cs_handlers);
+    // switch_core_remove_state_handler(&shmed_cs_handlers);
 
     // 清理
     munmap(shm_ptr, BUFFER_SIZE);
