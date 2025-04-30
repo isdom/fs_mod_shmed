@@ -21,17 +21,18 @@ extern "C"
 SWITCH_MODULE_DEFINITION(mod_shmed, mod_shmed_load, mod_shmed_shutdown, nullptr);
 };
 
-int shmed_alloc_block(int16_t len, switch_channel_t *channel) {
-    int block_idx = -1;
+int shmed_alloc_block(const uint16_t len, switch_channel_t *channel) {
+    int block_idx = 0;
     int try_cnt = 0;
     switch_mutex_lock(shm_mutex);
     while (try_cnt < BLOCK_COUNT - 1) {
         uint8_t *current = shm_ptr + (next_block_idx + 1) * BLOCK_SIZE;
-        int16_t data_size = (int16_t)((current[1] << 8) | current[0]);
+        uint16_t data_size = (uint16_t)((current[1] << 8) | current[0]);
         if (data_size == 0) {
             // set len to block's first 2 bytes as little ending
             current[0] = len & 0xff;
             current[1] = (len & 0xff00) >> 8;
+            current[2] = 0x00;
             block_idx = next_block_idx + 1;
             next_block_idx = (next_block_idx + 1) % (BLOCK_COUNT - 1);
             goto unlock;
@@ -63,8 +64,20 @@ static switch_bool_t handleABCTypeRead(switch_media_bug_t *bug, switch_channel_t
                           switch_channel_get_uuid(channel));
         return SWITCH_TRUE;
     } else {
+        /*
+         +---------------+---------------+---------------+---------------+---------------+-...-+---------------+
+         |  Length: 2B   | Ready_Flag:1B |        Timestamp (8B)         |        Payload (N Bytes)            |
+         |  (uint16_t)   |  0x00 / 0xFF  |        (int64_t, μs)          |        (variable length)            |
+         +---------------+---------------+-------+-------+-------+-------+---------------+-...-+---------------+
+                 |                |               |               |               |               |
+                 |                |               |               |               |               |
+                 v                v               v               v               v               v
+            [0x00 0x1F]      [0xFF]    [0x00 0x00 0x01 0x8A 0x01 0x8B 0x23 0x45]  [0x48 0x65 0x6C 0x6C 0x6F]
+            (Length=31)     (Ready)         (Timestamp: 100000 μs)                  ("Hello" in ASCII)
+        */
+
         switch_time_t now_tm = switch_micro_time_now();
-        int16_t size = (int16_t)(sizeof(switch_time_t) /* timestamp: 8 bytes */ + frame.datalen);
+        uint16_t size = (uint16_t)(1 + sizeof(switch_time_t) /* timestamp: 8 bytes */ + frame.datalen);
         if (size > BLOCK_SIZE - 2) {
             switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: handleABCTypeRead => frame.datalen:%d exceed block size, ignore!\n",
                               switch_channel_get_uuid(channel), size);
@@ -72,29 +85,19 @@ static switch_bool_t handleABCTypeRead(switch_media_bug_t *bug, switch_channel_t
         }
 
         int block_idx = shmed_alloc_block(size, channel);
-        if (block_idx >= 1) {
+        if (block_idx > 0) {
             switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "[%s]: store frame %d bytes to block [%d]\n",
                               switch_channel_get_uuid(channel), frame.datalen, block_idx);
 
             uint8_t *data_ptr = shm_ptr + block_idx * BLOCK_SIZE + 2; // skip 2 bytes for size
-            memcpy(data_ptr, &now_tm, sizeof(switch_time_t));
-            memcpy(data_ptr + sizeof(switch_time_t), frame.data, frame.datalen);
+            memcpy(data_ptr + 1, &now_tm, sizeof(switch_time_t));
+            memcpy(data_ptr + 1 + sizeof(switch_time_t), frame.data, frame.datalen);
+            // set ready flag
+            data_ptr[0] = 0xff;
+
+            char *unique_id = switch_channel_get_uuid(channel);
 
             update_block_idx(block_idx);
-
-            /*
-            char *unique_id = strdup(switch_channel_get_uuid(channel));
-            switch_event_t *event = nullptr;
-            if (switch_event_create(&event, SWITCH_EVENT_CUSTOM) == SWITCH_STATUS_SUCCESS) {
-                switch_event_set_subclass_name(event, "share_media");
-                switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "Unique-ID", unique_id);
-                switch_event_add_header(event, SWITCH_STACK_BOTTOM, "Block-Idx", "%d", block_idx);
-                switch_time_t send_tm = switch_micro_time_now();
-                memcpy(data_ptr + sizeof(switch_time_t), &send_tm, sizeof(switch_time_t));
-                switch_event_fire(&event);
-            }
-            switch_safe_free(unique_id);
-             */
         } else {
             switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: no valid block, drop frame %d bytes\n",
                               switch_channel_get_uuid(channel), frame.datalen);
