@@ -1,9 +1,12 @@
 #include <switch.h>
 #include <sys/mman.h>
 #include <fcntl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 
 const int BLOCK_SIZE = 512;
 const int BLOCK_COUNT = 1024 * 1024;
+int shm_fd;
 uint8_t* shm_ptr = nullptr;
 switch_mutex_t *shm_mutex = nullptr;
 int next_block_idx = 0;
@@ -214,18 +217,25 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_shmed_load) {
 
     switch_mutex_init(&shm_mutex, SWITCH_MUTEX_NESTED, pool);
 
+    // 保存当前进程的 umask
+    mode_t old_mask = umask(0); // 临时取消所有权限屏蔽
     // 创建共享内存
-    int shm_fd = shm_open("/media_shm", O_CREAT | O_RDWR, 0666);
-    ftruncate(shm_fd, BUFFER_SIZE); // BUFFER_SIZE 为共享内存大小
-    shm_ptr = (uint8_t*)mmap(NULL, BUFFER_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+    shm_fd = shm_open("/media_shm", O_CREAT | O_RDWR, 0666);
+    umask(old_mask); // 恢复原 umask，避免影响其他文件操作
+    if (shm_fd == -1) {
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "init share memory failed!\n");
+    } else {
+        ftruncate(shm_fd, BUFFER_SIZE); // BUFFER_SIZE 为共享内存大小
+        shm_ptr = (uint8_t*)mmap(NULL, BUFFER_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
 
-    memset(shm_ptr, 0, BUFFER_SIZE);
+        memset(shm_ptr, 0, BUFFER_SIZE);
 
-    // register global state handlers
-    // switch_core_add_state_handler(&shmed_cs_handlers);
-    if (switch_event_bind(modname, SWITCH_EVENT_CHANNEL_PROGRESS_MEDIA, SWITCH_EVENT_SUBCLASS_ANY,
-                          on_channel_progress_media, nullptr) != SWITCH_STATUS_SUCCESS) {
-        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Bind SWITCH_EVENT_CHANNEL_PROGRESS_MEDIA event failed!\n");
+        // register global state handlers
+        // switch_core_add_state_handler(&shmed_cs_handlers);
+        if (switch_event_bind(modname, SWITCH_EVENT_CHANNEL_PROGRESS_MEDIA, SWITCH_EVENT_SUBCLASS_ANY,
+                              on_channel_progress_media, nullptr) != SWITCH_STATUS_SUCCESS) {
+            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Bind SWITCH_EVENT_CHANNEL_PROGRESS_MEDIA event failed!\n");
+        }
     }
 
     switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "mod_shmed loaded\n");
@@ -243,8 +253,10 @@ SWITCH_MODULE_SHUTDOWN_FUNCTION(mod_shmed_shutdown) {
     // switch_core_remove_state_handler(&shmed_cs_handlers);
 
     // 清理
-    munmap(shm_ptr, BUFFER_SIZE);
-    shm_unlink("/media_shm");
+    if (shm_fd != -1) {
+        munmap(shm_ptr, BUFFER_SIZE);
+        shm_unlink("/media_shm");
+    }
 
     switch_mutex_destroy(shm_mutex);
 
