@@ -5,7 +5,7 @@
 #include <sys/stat.h>
 
 const int BLOCK_SIZE = 512;
-const int BLOCK_COUNT = 1024 * 1024;
+const int BLOCK_COUNT = 1024; // * 1024;
 int shm_fd;
 uint8_t* shm_ptr = nullptr;
 switch_mutex_t *shm_mutex = nullptr;
