@@ -2,6 +2,11 @@
 #include <sys/mman.h>
 #include <fcntl.h>
 
+const int BLOCK_SIZE = 512;
+const int BLOCK_COUNT = 1024 * 1024;
+uint8_t* shm_ptr = nullptr;
+switch_mutex_t *shm_mutex = nullptr;
+int next_block_idx = 0;
 
 //======================================== freeswitch module start ===============
 SWITCH_MODULE_LOAD_FUNCTION(mod_shmed_load);
@@ -13,9 +18,172 @@ extern "C"
 SWITCH_MODULE_DEFINITION(mod_shmed, mod_shmed_load, mod_shmed_shutdown, nullptr);
 };
 
-const int BUFFER_SIZE = 4096;
-static const char *const STR = "Hello, Shared Media!";
-void* shm_ptr = nullptr;
+int shmed_alloc_block(int16_t len, switch_channel_t *channel) {
+    int block_idx = -1;
+    int try_cnt = 0;
+    switch_mutex_lock(shm_mutex);
+    while (try_cnt < BLOCK_COUNT) {
+        uint8_t *current = shm_ptr + next_block_idx * BLOCK_SIZE;
+        int16_t data_size = (int16_t)((current[1] << 8) | current[0]);
+        if (data_size == 0) {
+            // set len to block's first 2 bytes as little ending
+            current[0] = len & 0xff;
+            current[1] = (len & 0xff00) >> 8;
+            block_idx = next_block_idx;
+            next_block_idx = (next_block_idx + 1) % BLOCK_COUNT;
+            goto unlock;
+        } else {
+            try_cnt++;
+            next_block_idx = (next_block_idx + 1) % BLOCK_COUNT;
+        }
+    }
+    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: shmed_alloc_block no valid block, try %d times!\n",
+                      switch_channel_get_uuid(channel), try_cnt);
+unlock:
+    switch_mutex_unlock(shm_mutex);
+    return block_idx;
+}
+
+static switch_bool_t handleABCTypeRead(switch_media_bug_t *bug, switch_channel_t *channel) {
+    uint8_t data[SWITCH_RECOMMENDED_BUFFER_SIZE];
+    switch_frame_t frame = {nullptr};
+    frame.data = data;
+    frame.buflen = sizeof(data);
+    if (switch_core_media_bug_read(bug, &frame, SWITCH_FALSE) != SWITCH_STATUS_SUCCESS) {
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: handleABCTypeRead => switch_core_media_bug_read failed, ignore!\n",
+                          switch_channel_get_uuid(channel));
+        return SWITCH_TRUE;
+    } else {
+        switch_time_t now_tm = switch_micro_time_now();
+        int16_t size = (int16_t)(sizeof(switch_time_t) /* timestamp: 8 bytes */ + frame.datalen);
+        if (size > BLOCK_SIZE - 2) {
+            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: handleABCTypeRead => frame.datalen:%d exceed block size, ignore!\n",
+                              switch_channel_get_uuid(channel), size);
+            return SWITCH_TRUE;
+        }
+
+        int block_idx = shmed_alloc_block(size, channel);
+        if (block_idx >= 0) {
+            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "[%s]: store frame %d bytes to block [%d]\n",
+                              switch_channel_get_uuid(channel), frame.datalen, block_idx);
+
+            uint8_t *data_ptr = shm_ptr + block_idx * BLOCK_SIZE + 2; // skip 2 bytes for size
+            memcpy(data_ptr, &now_tm, sizeof(switch_time_t));
+            memcpy(data_ptr + sizeof(switch_time_t), frame.data, frame.datalen);
+
+            char *unique_id = strdup(switch_channel_get_uuid(channel));
+            switch_event_t *event = nullptr;
+            if (switch_event_create(&event, SWITCH_EVENT_CUSTOM) == SWITCH_STATUS_SUCCESS) {
+                switch_event_set_subclass_name(event, "share_media");
+                switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "Unique-ID", unique_id);
+                switch_event_add_header(event, SWITCH_STACK_BOTTOM, "Block-Idx", "%d", block_idx);
+                switch_event_fire(&event);
+            }
+            switch_safe_free(unique_id);
+        } else {
+            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: no valid block, drop frame %d bytes\n",
+                              switch_channel_get_uuid(channel), frame.datalen);
+        }
+    }
+    return SWITCH_TRUE;
+}
+
+static switch_bool_t handleABCTypeClose(switch_channel_t *channel) {
+    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "[%s]: handleABCTypeClose\n", switch_channel_get_uuid(channel));
+    return SWITCH_TRUE;
+}
+
+static switch_bool_t handleABCTypeInit(switch_channel_t *channel) {
+    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "[%s]: Share Media Init\n", switch_channel_get_uuid(channel));
+    return SWITCH_TRUE;
+}
+
+/**
+ * asr 回调处理
+ *
+ * @param bug
+ * @param pvt
+ * @param type
+ * @return switch_bool_t
+ */
+static switch_bool_t share_media_bug_hook(switch_media_bug_t *bug, switch_channel_t *channel, switch_abc_type_t type) {
+    // switch_channel_t *channel = switch_media_bug_get switch_core_session_get_channel(pvt->asr_caller.session);
+    switch (type) {
+        case SWITCH_ABC_TYPE_INIT:
+            return handleABCTypeInit(channel);
+        case SWITCH_ABC_TYPE_CLOSE:
+            return handleABCTypeClose(channel);
+        case SWITCH_ABC_TYPE_READ:
+            return handleABCTypeRead(bug, channel);
+        default:
+            break;
+    }
+    return SWITCH_TRUE;
+}
+
+static switch_status_t shmed_on_exchange_media(switch_core_session_t *session) {
+    switch_channel_t *channel = switch_core_session_get_channel(session);
+    switch_status_t status = SWITCH_STATUS_SUCCESS;
+    // 对 session 添加 media bug
+    switch_media_bug_t *bug;
+    if ((status = switch_core_media_bug_add(session, "shmed", nullptr,
+                                            reinterpret_cast<switch_media_bug_callback_t>(share_media_bug_hook),
+                                            channel, 0,
+                                            // SMBF_READ_REPLACE | SMBF_WRITE_REPLACE |  SMBF_NO_PAUSE | SMBF_ONE_ONLY,
+                                            SMBF_READ_STREAM | SMBF_NO_PAUSE,
+                                            &bug)) != SWITCH_STATUS_SUCCESS) {
+        // SWITCH_ABC_TYPE_INIT 调用逻辑参考: https://github.com/signalwire/freeswitch/blob/79ce08810120b681992a3e666bcbe8d2ac2a7383/src/switch_core_media_bug.c#L956C18-L956C18
+        // SWITCH_ABC_TYPE_READ 调用逻辑参考：https://github.com/signalwire/freeswitch/blob/79ce08810120b681992a3e666bcbe8d2ac2a7383/src/switch_core_io.c#L748
+        // 如上述代码中所示，当 switch_media_bug_callback_t 返回值为：SWITCH_FALSE 时，该 media bug 都会被立即从 bug 链表中删除
+        // 因此 如果 ASR 出现异常，应该以及 在 media bug callback 中返回 SWITCH_FALSE
+        return SWITCH_STATUS_SUCCESS;
+    }
+    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO,"[%s], shmed_on_exchange_media\n", switch_channel_get_name(channel));
+    return SWITCH_STATUS_SUCCESS;
+}
+
+switch_state_handler_table_t shmed_cs_handlers = {
+        /*! executed when the state changes to init */
+        // switch_state_handler_t on_init;
+        nullptr,
+        /*! executed when the state changes to routing */
+        // switch_state_handler_t on_routing;
+        nullptr,
+        /*! executed when the state changes to execute */
+        // switch_state_handler_t on_execute;
+        nullptr,
+        /*! executed when the state changes to hangup */
+        // switch_state_handler_t on_hangup;
+        nullptr,
+        /*! executed when the state changes to exchange_media */
+        // switch_state_handler_t on_exchange_media;
+        shmed_on_exchange_media,
+        /*! executed when the state changes to soft_execute */
+        // switch_state_handler_t on_soft_execute;
+        nullptr,
+        /*! executed when the state changes to consume_media */
+        // switch_state_handler_t on_consume_media;
+        nullptr,
+        /*! executed when the state changes to hibernate */
+        // switch_state_handler_t on_hibernate;
+        nullptr,
+        /*! executed when the state changes to reset */
+        // switch_state_handler_t on_reset;
+        nullptr,
+        /*! executed when the state changes to park */
+        // switch_state_handler_t on_park;
+        nullptr,
+        /*! executed when the state changes to reporting */
+        // switch_state_handler_t on_reporting;
+        nullptr,
+        /*! executed when the state changes to destroy */
+        // switch_state_handler_t on_destroy;
+        nullptr,
+        // int flags;
+        0
+};
+
+const size_t BUFFER_SIZE = BLOCK_SIZE * BLOCK_COUNT;
 
 /**
  *  定义load函数，加载时运行
@@ -26,13 +194,18 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_shmed_load) {
 
     switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "mod_shmed load starting\n");
 
+    switch_mutex_init(&shm_mutex, SWITCH_MUTEX_NESTED, pool);
+
     // 创建共享内存
     int shm_fd = shm_open("/media_shm", O_CREAT | O_RDWR, 0666);
     ftruncate(shm_fd, BUFFER_SIZE); // BUFFER_SIZE 为共享内存大小
-    shm_ptr = mmap(NULL, BUFFER_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+    shm_ptr = (uint8_t*)mmap(NULL, BUFFER_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
 
-    memcpy(shm_ptr, STR, strlen(STR));
-    
+    memset(shm_ptr, 0, BUFFER_SIZE);
+
+    // register global state handlers
+    switch_core_add_state_handler(&shmed_cs_handlers);
+
     switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "mod_shmed loaded\n");
 
     return SWITCH_STATUS_SUCCESS;
@@ -44,9 +217,14 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_shmed_load) {
 SWITCH_MODULE_SHUTDOWN_FUNCTION(mod_shmed_shutdown) {
     switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, " mod_shmed shutdown called\n");
 
+    // unregister global state handlers
+    switch_core_remove_state_handler(&shmed_cs_handlers);
+
     // 清理
     munmap(shm_ptr, BUFFER_SIZE);
     shm_unlink("/media_shm");
+
+    switch_mutex_destroy(shm_mutex);
 
     switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, " mod_shmed unload\n");
     return SWITCH_STATUS_SUCCESS;
