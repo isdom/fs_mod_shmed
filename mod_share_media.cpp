@@ -67,12 +67,12 @@ static switch_bool_t handleABCTypeRead(switch_media_bug_t *bug, switch_channel_t
         /*
          +---------------+---------------+---------------+---------------+---------------+-...-+---------------+
          |  Length: 2B   | Ready_Flag:1B |        Timestamp (8B)         |        Payload (N Bytes)            |
-         |  (uint16_t)   |  0x00 / 0xFF  |        (int64_t, μs)          |        (variable length)            |
+         |  (uint16_t)   |  0x00 / 0x7F  |        (int64_t, μs)          |        (variable length)            |
          +---------------+---------------+-------+-------+-------+-------+---------------+-...-+---------------+
                  |                |               |               |               |               |
                  |                |               |               |               |               |
                  v                v               v               v               v               v
-            [0x00 0x1F]      [0xFF]    [0x00 0x00 0x01 0x8A 0x01 0x8B 0x23 0x45]  [0x48 0x65 0x6C 0x6C 0x6F]
+            [0x00 0x1F]      [0x7F]    [0x00 0x00 0x01 0x8A 0x01 0x8B 0x23 0x45]  [0x48 0x65 0x6C 0x6C 0x6F]
             (Length=31)     (Ready)         (Timestamp: 100000 μs)                  ("Hello" in ASCII)
         */
 
@@ -93,7 +93,7 @@ static switch_bool_t handleABCTypeRead(switch_media_bug_t *bug, switch_channel_t
             memcpy(data_ptr + 1, &now_tm, sizeof(switch_time_t));
             memcpy(data_ptr + 1 + sizeof(switch_time_t), frame.data, frame.datalen);
             // set ready flag
-            data_ptr[0] = 0xff;
+            data_ptr[0] = 0x7F;
 
             char *unique_id = switch_channel_get_uuid(channel);
 
