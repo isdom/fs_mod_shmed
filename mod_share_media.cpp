@@ -58,7 +58,7 @@ static switch_bool_t handleABCTypeRead(switch_media_bug_t *bug, switch_channel_t
         return SWITCH_TRUE;
     } else {
         switch_time_t now_tm = switch_micro_time_now();
-        int16_t size = (int16_t)(sizeof(switch_time_t) /* timestamp: 8 bytes */ + frame.datalen);
+        int16_t size = (int16_t)(sizeof(switch_time_t) * 2 /* timestamp: 8 bytes */ + frame.datalen);
         if (size > BLOCK_SIZE - 2) {
             switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: handleABCTypeRead => frame.datalen:%d exceed block size, ignore!\n",
                               switch_channel_get_uuid(channel), size);
@@ -72,7 +72,7 @@ static switch_bool_t handleABCTypeRead(switch_media_bug_t *bug, switch_channel_t
 
             uint8_t *data_ptr = shm_ptr + block_idx * BLOCK_SIZE + 2; // skip 2 bytes for size
             memcpy(data_ptr, &now_tm, sizeof(switch_time_t));
-            memcpy(data_ptr + sizeof(switch_time_t), frame.data, frame.datalen);
+            memcpy(data_ptr + 2 * sizeof(switch_time_t), frame.data, frame.datalen);
 
             char *unique_id = strdup(switch_channel_get_uuid(channel));
             switch_event_t *event = nullptr;
@@ -80,6 +80,8 @@ static switch_bool_t handleABCTypeRead(switch_media_bug_t *bug, switch_channel_t
                 switch_event_set_subclass_name(event, "share_media");
                 switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "Unique-ID", unique_id);
                 switch_event_add_header(event, SWITCH_STACK_BOTTOM, "Block-Idx", "%d", block_idx);
+                switch_time_t send_tm = switch_micro_time_now();
+                memcpy(data_ptr + sizeof(switch_time_t), &send_tm, sizeof(switch_time_t));
                 switch_event_fire(&event);
             }
             switch_safe_free(unique_id);
