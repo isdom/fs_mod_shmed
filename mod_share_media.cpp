@@ -25,19 +25,19 @@ int shmed_alloc_block(int16_t len, switch_channel_t *channel) {
     int block_idx = -1;
     int try_cnt = 0;
     switch_mutex_lock(shm_mutex);
-    while (try_cnt < BLOCK_COUNT) {
-        uint8_t *current = shm_ptr + next_block_idx * BLOCK_SIZE;
+    while (try_cnt < BLOCK_COUNT - 1) {
+        uint8_t *current = shm_ptr + (next_block_idx + 1) * BLOCK_SIZE;
         int16_t data_size = (int16_t)((current[1] << 8) | current[0]);
         if (data_size == 0) {
             // set len to block's first 2 bytes as little ending
             current[0] = len & 0xff;
             current[1] = (len & 0xff00) >> 8;
-            block_idx = next_block_idx;
-            next_block_idx = (next_block_idx + 1) % BLOCK_COUNT;
+            block_idx = next_block_idx + 1;
+            next_block_idx = (next_block_idx + 1) % (BLOCK_COUNT - 1);
             goto unlock;
         } else {
             try_cnt++;
-            next_block_idx = (next_block_idx + 1) % BLOCK_COUNT;
+            next_block_idx = (next_block_idx + 1) % (BLOCK_COUNT - 1);
         }
     }
     switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: shmed_alloc_block no valid block, try %d times!\n",
@@ -45,6 +45,12 @@ int shmed_alloc_block(int16_t len, switch_channel_t *channel) {
 unlock:
     switch_mutex_unlock(shm_mutex);
     return block_idx;
+}
+
+void update_block_idx(int block_idx) {
+    switch_mutex_lock(shm_mutex);
+    memcpy(shm_ptr, &block_idx, sizeof(int));
+    switch_mutex_unlock(shm_mutex);
 }
 
 static switch_bool_t handleABCTypeRead(switch_media_bug_t *bug, switch_channel_t *channel) {
@@ -58,7 +64,7 @@ static switch_bool_t handleABCTypeRead(switch_media_bug_t *bug, switch_channel_t
         return SWITCH_TRUE;
     } else {
         switch_time_t now_tm = switch_micro_time_now();
-        int16_t size = (int16_t)(sizeof(switch_time_t) * 2 /* timestamp: 8 bytes */ + frame.datalen);
+        int16_t size = (int16_t)(sizeof(switch_time_t) /* timestamp: 8 bytes */ + frame.datalen);
         if (size > BLOCK_SIZE - 2) {
             switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: handleABCTypeRead => frame.datalen:%d exceed block size, ignore!\n",
                               switch_channel_get_uuid(channel), size);
@@ -66,14 +72,17 @@ static switch_bool_t handleABCTypeRead(switch_media_bug_t *bug, switch_channel_t
         }
 
         int block_idx = shmed_alloc_block(size, channel);
-        if (block_idx >= 0) {
+        if (block_idx >= 1) {
             switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "[%s]: store frame %d bytes to block [%d]\n",
                               switch_channel_get_uuid(channel), frame.datalen, block_idx);
 
             uint8_t *data_ptr = shm_ptr + block_idx * BLOCK_SIZE + 2; // skip 2 bytes for size
             memcpy(data_ptr, &now_tm, sizeof(switch_time_t));
-            memcpy(data_ptr + 2 * sizeof(switch_time_t), frame.data, frame.datalen);
+            memcpy(data_ptr + sizeof(switch_time_t), frame.data, frame.datalen);
 
+            update_block_idx(block_idx);
+
+            /*
             char *unique_id = strdup(switch_channel_get_uuid(channel));
             switch_event_t *event = nullptr;
             if (switch_event_create(&event, SWITCH_EVENT_CUSTOM) == SWITCH_STATUS_SUCCESS) {
@@ -85,6 +94,7 @@ static switch_bool_t handleABCTypeRead(switch_media_bug_t *bug, switch_channel_t
                 switch_event_fire(&event);
             }
             switch_safe_free(unique_id);
+             */
         } else {
             switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: no valid block, drop frame %d bytes\n",
                               switch_channel_get_uuid(channel), frame.datalen);
