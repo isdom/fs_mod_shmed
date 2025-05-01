@@ -5,7 +5,7 @@
 #include <sys/stat.h>
 
 const int BLOCK_SIZE = 512;
-const int BLOCK_COUNT = 1024; // * 1024;
+const int BLOCK_COUNT = 1024 * 1024;
 int shm_fd;
 uint8_t* shm_ptr = nullptr;
 switch_mutex_t *shm_mutex = nullptr;
@@ -32,7 +32,11 @@ int shmed_alloc_block(const uint16_t len, switch_channel_t *channel) {
             // set len to block's first 2 bytes as little ending
             current[0] = len & 0xff;
             current[1] = (len & 0xff00) >> 8;
+            // clear local idx field (int32_t)
             current[2] = 0x00;
+            current[3] = 0x00;
+            current[4] = 0x00;
+            current[5] = 0x00;
             block_idx = next_block_idx + 1;
             next_block_idx = (next_block_idx + 1) % (BLOCK_COUNT - 1);
             goto unlock;
@@ -50,24 +54,32 @@ unlock:
 
 void update_block_idx(int block_idx) {
     switch_mutex_lock(shm_mutex);
-    memcpy(shm_ptr, &block_idx, sizeof(int));
+    if (block_idx == next_block_idx) { // TODO
+        memcpy(shm_ptr, &block_idx, sizeof(int));
+    }
     switch_mutex_unlock(shm_mutex);
 }
 
-static switch_bool_t handleABCTypeRead(switch_media_bug_t *bug, switch_channel_t *channel) {
+typedef struct {
+    int32_t  local_idx;
+    switch_core_session_t *session;
+    switch_media_bug_t *bug;
+} shmed_bug_t;
+
+static switch_bool_t handle_read_media_bug(switch_media_bug_t *bug, shmed_bug_t *pvt, switch_channel_t *channel) {
     uint8_t data[SWITCH_RECOMMENDED_BUFFER_SIZE];
     switch_frame_t frame = {nullptr};
     frame.data = data;
     frame.buflen = sizeof(data);
     if (switch_core_media_bug_read(bug, &frame, SWITCH_FALSE) != SWITCH_STATUS_SUCCESS) {
-        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: handleABCTypeRead => switch_core_media_bug_read failed, ignore!\n",
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: handle_read_media_bug => switch_core_media_bug_read failed, ignore!\n",
                           switch_channel_get_uuid(channel));
         return SWITCH_TRUE;
     } else {
         /*
          +---------------+---------------+---------------+---------------+---------------+-...-+---------------+
-         |  Length: 2B   | Ready_Flag:1B |        Timestamp (8B)         |        Payload (N Bytes)            |
-         |  (uint16_t)   |  0x00 / 0x7F  |        (int64_t, μs)          |        (variable length)            |
+         |  Length: 2B   | LocalIdx:4B   |        Timestamp (8B)         |        Payload (N Bytes)            |
+         |  (uint16_t)   |  (int32_t)    |        (int64_t, μs)          |        (variable length)            |
          +---------------+---------------+-------+-------+-------+-------+---------------+-...-+---------------+
                  |                |               |               |               |               |
                  |                |               |               |               |               |
@@ -77,9 +89,9 @@ static switch_bool_t handleABCTypeRead(switch_media_bug_t *bug, switch_channel_t
         */
 
         switch_time_t now_tm = switch_micro_time_now();
-        uint16_t size = (uint16_t)(1 + sizeof(switch_time_t) /* timestamp: 8 bytes */ + frame.datalen);
+        uint16_t size = (uint16_t)(4 + sizeof(switch_time_t) /* timestamp: 8 bytes */ + frame.datalen);
         if (size > BLOCK_SIZE - 2) {
-            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: handleABCTypeRead => frame.datalen:%d exceed block size, ignore!\n",
+            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: handle_read_media_bug => frame.datalen:%d exceed block size, ignore!\n",
                               switch_channel_get_uuid(channel), size);
             return SWITCH_TRUE;
         }
@@ -90,13 +102,12 @@ static switch_bool_t handleABCTypeRead(switch_media_bug_t *bug, switch_channel_t
                               switch_channel_get_uuid(channel), frame.datalen, block_idx);
 
             uint8_t *data_ptr = shm_ptr + block_idx * BLOCK_SIZE + 2; // skip 2 bytes for size
-            memcpy(data_ptr + 1, &now_tm, sizeof(switch_time_t));
-            memcpy(data_ptr + 1 + sizeof(switch_time_t), frame.data, frame.datalen);
-            // set ready flag
-            data_ptr[0] = 0x7F;
+            memcpy(data_ptr + sizeof(int32_t), &now_tm, sizeof(switch_time_t));
+            memcpy(data_ptr + sizeof(int32_t) + sizeof(switch_time_t), frame.data, frame.datalen);
+            // set local idx for block
+            memcpy(data_ptr, &pvt->local_idx, sizeof(int32_t));
 
-            char *unique_id = switch_channel_get_uuid(channel);
-
+            // update newest block id to notify peer
             update_block_idx(block_idx);
         } else {
             switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: no valid block, drop frame %d bytes\n",
@@ -106,12 +117,12 @@ static switch_bool_t handleABCTypeRead(switch_media_bug_t *bug, switch_channel_t
     return SWITCH_TRUE;
 }
 
-static switch_bool_t handleABCTypeClose(switch_channel_t *channel) {
-    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "[%s]: handleABCTypeClose\n", switch_channel_get_uuid(channel));
+static switch_bool_t handle_close_media_bug(shmed_bug_t *pvt, switch_channel_t *channel) {
+    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "[%s]: handle_close_media_bug\n", switch_channel_get_uuid(channel));
     return SWITCH_TRUE;
 }
 
-static switch_bool_t handleABCTypeInit(switch_channel_t *channel) {
+static switch_bool_t handle_init_media_bug(shmed_bug_t *pvt, switch_channel_t *channel) {
     switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "[%s]: Share Media Init\n", switch_channel_get_uuid(channel));
     return SWITCH_TRUE;
 }
@@ -124,15 +135,15 @@ static switch_bool_t handleABCTypeInit(switch_channel_t *channel) {
  * @param type
  * @return switch_bool_t
  */
-static switch_bool_t share_media_bug_hook(switch_media_bug_t *bug, switch_channel_t *channel, switch_abc_type_t type) {
-    // switch_channel_t *channel = switch_media_bug_get switch_core_session_get_channel(pvt->asr_caller.session);
+static switch_bool_t share_media_bug_hook(switch_media_bug_t *bug, shmed_bug_t *pvt, switch_abc_type_t type) {
+    switch_channel_t *channel = switch_core_session_get_channel(pvt->session);
     switch (type) {
         case SWITCH_ABC_TYPE_INIT:
-            return handleABCTypeInit(channel);
+            return handle_init_media_bug(pvt, channel);
         case SWITCH_ABC_TYPE_CLOSE:
-            return handleABCTypeClose(channel);
+            return handle_close_media_bug(pvt, channel);
         case SWITCH_ABC_TYPE_READ:
-            return handleABCTypeRead(bug, channel);
+            return handle_read_media_bug(bug, pvt, channel);
         default:
             break;
     }
@@ -142,18 +153,32 @@ static switch_bool_t share_media_bug_hook(switch_media_bug_t *bug, switch_channe
 static switch_status_t shmed_on_exchange_media(switch_core_session_t *session) {
     switch_channel_t *channel = switch_core_session_get_channel(session);
     switch_status_t status = SWITCH_STATUS_SUCCESS;
+
+    const char *str_idx = switch_channel_get_variable(channel, "local_idx");
+    if (!str_idx) {
+        // not found local_idx var for session
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING,
+                          "shmed_on_exchange_media: [%s] missing local_idx, ignore\n",
+                          switch_core_session_get_uuid(session));
+        return SWITCH_STATUS_SUCCESS;
+    }
+
+    auto pvt = (shmed_bug_t*)switch_core_session_alloc(session, sizeof(shmed_bug_t));
+    pvt->local_idx = (int32_t)strtol(str_idx, nullptr, 10);
+    pvt->session = session;
+
     // 对 session 添加 media bug
     switch_media_bug_t *bug;
     if ((status = switch_core_media_bug_add(session, "shmed", nullptr,
                                             reinterpret_cast<switch_media_bug_callback_t>(share_media_bug_hook),
-                                            channel, 0,
+                                            pvt, 0,
                                             // SMBF_READ_REPLACE | SMBF_WRITE_REPLACE |  SMBF_NO_PAUSE | SMBF_ONE_ONLY,
                                             SMBF_READ_STREAM | SMBF_NO_PAUSE,
-                                            &bug)) != SWITCH_STATUS_SUCCESS) {
+                                            &pvt->bug)) != SWITCH_STATUS_SUCCESS) {
         // SWITCH_ABC_TYPE_INIT 调用逻辑参考: https://github.com/signalwire/freeswitch/blob/79ce08810120b681992a3e666bcbe8d2ac2a7383/src/switch_core_media_bug.c#L956C18-L956C18
         // SWITCH_ABC_TYPE_READ 调用逻辑参考：https://github.com/signalwire/freeswitch/blob/79ce08810120b681992a3e666bcbe8d2ac2a7383/src/switch_core_io.c#L748
         // 如上述代码中所示，当 switch_media_bug_callback_t 返回值为：SWITCH_FALSE 时，该 media bug 都会被立即从 bug 链表中删除
-        // 因此 如果 ASR 出现异常，应该以及 在 media bug callback 中返回 SWITCH_FALSE
+        // 因此, 如果媒体处理出现异常，应该以及 在 media bug callback 中返回 SWITCH_FALSE
         return SWITCH_STATUS_SUCCESS;
     }
     switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO,"[%s], shmed_on_exchange_media\n", switch_channel_get_name(channel));
