@@ -168,7 +168,6 @@ static switch_status_t shmed_on_exchange_media(switch_core_session_t *session) {
     pvt->session = session;
 
     // 对 session 添加 media bug
-    switch_media_bug_t *bug;
     if ((status = switch_core_media_bug_add(session, "shmed", nullptr,
                                             reinterpret_cast<switch_media_bug_callback_t>(share_media_bug_hook),
                                             pvt, 0,
