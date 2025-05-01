@@ -98,9 +98,8 @@ static switch_bool_t handle_read_media_bug(switch_media_bug_t *bug, shmed_bug_t 
 
         int block_idx = shmed_alloc_block(size, channel);
         if (block_idx > 0) {
-            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "[%s]: store frame %d bytes to block [%d]\n",
-                              switch_channel_get_uuid(channel), frame.datalen, block_idx);
-
+            //switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "[%s]: store frame %d bytes to block [%d]\n",
+            //                  switch_channel_get_uuid(channel), frame.datalen, block_idx);
             uint8_t *data_ptr = shm_ptr + block_idx * BLOCK_SIZE + 2; // skip 2 bytes for size
             memcpy(data_ptr + sizeof(int32_t), &now_tm, sizeof(switch_time_t));
             memcpy(data_ptr + sizeof(int32_t) + sizeof(switch_time_t), frame.data, frame.datalen);
