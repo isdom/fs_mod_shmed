@@ -283,6 +283,24 @@ SWITCH_STANDARD_API(shmed_handled_function) {
     return SWITCH_STATUS_SUCCESS;
 }
 
+
+SWITCH_STANDARD_API(shmed_test_function) {
+    if (zstr(cmd)) {
+        stream->write_function(stream, "shmed_test: parameter missing.\n");
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "shmed_test: parameter missing.\n");
+        return SWITCH_STATUS_SUCCESS;
+    }
+
+    long count = strtol(cmd, nullptr, 10);
+    for (int i = 0; i < count; i++) {
+        long before = switch_micro_time_now();
+        switch_micro_sleep(10);
+        long after = switch_micro_time_now();
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "sleep %ld mss\n", after - before);
+    }
+    return SWITCH_STATUS_SUCCESS;
+}
+
 /**
  *  定义load函数，加载时运行
  */
@@ -304,6 +322,12 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_shmed_load) {
                    "shmed_handled",
                    "shmed_handled api",
                    shmed_handled_function,
+                   "<cmd><args>");
+
+    SWITCH_ADD_API(api_interface,
+                   "shmed_test",
+                   "shmed_test api",
+                   shmed_test_function,
                    "<cmd><args>");
 
     switch_mutex_init(&shm_mutex, SWITCH_MUTEX_NESTED, pool);
