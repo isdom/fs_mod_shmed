@@ -160,7 +160,7 @@ static switch_bool_t share_media_bug_hook(switch_media_bug_t *bug, shmed_bug_t *
     return SWITCH_TRUE;
 }
 
-static switch_status_t shmed_on_exchange_media(switch_core_session_t *session) {
+static void shmed_hook_session(switch_core_session_t *session) {
     switch_channel_t *channel = switch_core_session_get_channel(session);
     switch_status_t status = SWITCH_STATUS_SUCCESS;
 
@@ -168,9 +168,9 @@ static switch_status_t shmed_on_exchange_media(switch_core_session_t *session) {
     if (!str_idx) {
         // not found local_idx var for session
         switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING,
-                          "shmed_on_exchange_media: [%s] missing local_idx, ignore\n",
+                          "shmed_hook_session: [%s] missing local_idx, ignore\n",
                           switch_core_session_get_uuid(session));
-        return SWITCH_STATUS_SUCCESS;
+        return;
     }
 
     auto pvt = (shmed_bug_t*)switch_core_session_alloc(session, sizeof(shmed_bug_t));
@@ -188,10 +188,9 @@ static switch_status_t shmed_on_exchange_media(switch_core_session_t *session) {
         // SWITCH_ABC_TYPE_READ 调用逻辑参考：https://github.com/signalwire/freeswitch/blob/79ce08810120b681992a3e666bcbe8d2ac2a7383/src/switch_core_io.c#L748
         // 如上述代码中所示，当 switch_media_bug_callback_t 返回值为：SWITCH_FALSE 时，该 media bug 都会被立即从 bug 链表中删除
         // 因此, 如果媒体处理出现异常，应该以及 在 media bug callback 中返回 SWITCH_FALSE
-        return SWITCH_STATUS_SUCCESS;
+        return;
     }
-    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO,"[%s], shmed_on_exchange_media\n", switch_channel_get_name(channel));
-    return SWITCH_STATUS_SUCCESS;
+    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO,"[%s], shmed_hook_session\n", switch_channel_get_name(channel));
 }
 
 static void on_channel_progress_media(switch_event_t *event) {
@@ -207,51 +206,10 @@ static void on_channel_progress_media(switch_event_t *event) {
         switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "on_channel_progress_media: locate session [%s] failed, maybe ended\n",
                           uuid);
     } else {
-        shmed_on_exchange_media(session);
+        shmed_hook_session(session);
         switch_core_session_rwunlock(session);
     }
 }
-
-switch_state_handler_table_t shmed_cs_handlers = {
-        /*! executed when the state changes to init */
-        // switch_state_handler_t on_init;
-        nullptr,
-        /*! executed when the state changes to routing */
-        // switch_state_handler_t on_routing;
-        nullptr,
-        /*! executed when the state changes to execute */
-        // switch_state_handler_t on_execute;
-        nullptr,
-        /*! executed when the state changes to hangup */
-        // switch_state_handler_t on_hangup;
-        nullptr,
-        /*! executed when the state changes to exchange_media */
-        // switch_state_handler_t on_exchange_media;
-        shmed_on_exchange_media,
-        /*! executed when the state changes to soft_execute */
-        // switch_state_handler_t on_soft_execute;
-        nullptr,
-        /*! executed when the state changes to consume_media */
-        // switch_state_handler_t on_consume_media;
-        nullptr,
-        /*! executed when the state changes to hibernate */
-        // switch_state_handler_t on_hibernate;
-        nullptr,
-        /*! executed when the state changes to reset */
-        // switch_state_handler_t on_reset;
-        nullptr,
-        /*! executed when the state changes to park */
-        // switch_state_handler_t on_park;
-        nullptr,
-        /*! executed when the state changes to reporting */
-        // switch_state_handler_t on_reporting;
-        nullptr,
-        /*! executed when the state changes to destroy */
-        // switch_state_handler_t on_destroy;
-        nullptr,
-        // int flags;
-        0
-};
 
 const size_t BUFFER_SIZE = BLOCK_SIZE * BLOCK_COUNT;
 
