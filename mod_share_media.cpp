@@ -109,6 +109,7 @@ static switch_bool_t handle_read_media_bug(switch_media_bug_t *bug, shmed_bug_t 
             // update newest block id to notify peer
             update_block_idx(block_idx);
 
+            /*
             char *unique_id = strdup(switch_channel_get_uuid(channel));
             switch_event_t *event = nullptr;
             if (switch_event_create(&event, SWITCH_EVENT_CUSTOM) == SWITCH_STATUS_SUCCESS) {
@@ -118,7 +119,7 @@ static switch_bool_t handle_read_media_bug(switch_media_bug_t *bug, shmed_bug_t 
                 switch_event_fire(&event);
             }
             switch_safe_free(unique_id);
-
+            */
         } else {
             switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: no valid block, drop frame %d bytes\n",
                               switch_channel_get_uuid(channel), frame.datalen);
@@ -273,6 +274,20 @@ SWITCH_STANDARD_API(shmed_tmdiff_function) {
     return SWITCH_STATUS_SUCCESS;
 }
 
+// shmed_handled start_mss
+SWITCH_STANDARD_API(shmed_handled_function) {
+    if (zstr(cmd)) {
+        stream->write_function(stream, "shmed_handled: parameter missing.\n");
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "shmed_handled: parameter missing.\n");
+        return SWITCH_STATUS_SUCCESS;
+    }
+
+    const long start_mss = strtol(cmd, nullptr, 10);
+    const long now = switch_micro_time_now();
+    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "handle block delay %ld mss\n", now - start_mss);
+    return SWITCH_STATUS_SUCCESS;
+}
+
 /**
  *  定义load函数，加载时运行
  */
@@ -288,6 +303,12 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_shmed_load) {
                    "shmed_tmdiff",
                    "shmed_tmdiff_function api",
                    shmed_tmdiff_function,
+                   "<cmd><args>");
+
+    SWITCH_ADD_API(api_interface,
+                   "shmed_handled",
+                   "shmed_handled api",
+                   shmed_handled_function,
                    "<cmd><args>");
 
     switch_mutex_init(&shm_mutex, SWITCH_MUTEX_NESTED, pool);
