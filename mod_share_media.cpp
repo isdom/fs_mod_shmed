@@ -303,9 +303,9 @@ SWITCH_STANDARD_API(shmed_test_function) {
     long count = strtol(argv[1], nullptr, 10);
     long timeout = strtol(argv[0], nullptr, 10);
     for (int i = 0; i < count; i++) {
-        long before = switch_micro_time_now();
+        switch_time_t before = switch_time_ref();
         switch_micro_sleep(timeout);
-        long after = switch_micro_time_now();
+        switch_time_t after = switch_time_ref();
         switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "sleep %ld mss\n", after - before);
     }
     switch_core_destroy_memory_pool(&pool);
