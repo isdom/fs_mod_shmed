@@ -53,9 +53,11 @@ unlock:
 }
 
 void update_block_idx(int block_idx) {
+    int idx_dup[2];
     switch_mutex_lock(shm_mutex);
-    if (block_idx == next_block_idx) { // TODO
-        memcpy(shm_ptr, &block_idx, sizeof(int));
+    if (block_idx == next_block_idx) {
+        idx_dup[0] = idx_dup[1] = block_idx;
+        memcpy(shm_ptr, &idx_dup, sizeof(idx_dup));
     }
     switch_mutex_unlock(shm_mutex);
 }
@@ -106,15 +108,17 @@ static switch_bool_t handle_read_media_bug(switch_media_bug_t *bug, shmed_bug_t 
             // set local idx for block
             memcpy(data_ptr, &pvt->local_idx, sizeof(int32_t));
 
-            // update newest block id to notify peer
+            // update the newest block id to 0 block: notify local agent
             update_block_idx(block_idx);
 
+            /*
             switch_event_t *event = nullptr;
             if (switch_event_create(&event, SWITCH_EVENT_CUSTOM) == SWITCH_STATUS_SUCCESS) {
                 switch_event_set_subclass_name(event, "shmed_blkwt");
                 switch_event_add_header(event, SWITCH_STACK_BOTTOM, "block-idx", "%d", block_idx);
                 switch_event_fire(&event);
             }
+            */
         } else {
             switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: no valid block, drop frame %d bytes\n",
                               switch_channel_get_uuid(channel), frame.datalen);
