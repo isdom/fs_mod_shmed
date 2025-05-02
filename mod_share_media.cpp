@@ -302,16 +302,23 @@ SWITCH_STANDARD_API(shmed_test_function) {
     char *argv[10];
     memset(argv, 0, sizeof(char *) * 10);
 
-    int argc = switch_split(my_cmd, ' ', argv);
-
-    long count = strtol(argv[1], nullptr, 10);
-    long timeout = strtol(argv[0], nullptr, 10);
-    for (int i = 0; i < count; i++) {
-        switch_time_t before = switch_time_now(); //switch_time_ref();
-        switch_micro_sleep(timeout);
-        switch_time_t after = switch_time_now(); //switch_time_ref();
-        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "sleep %ld mss\n", after - before);
+    if (switch_split(my_cmd, ' ', argv) < 2) {
+        stream->write_function(stream, "shmed_test <timeout> <times>\n");
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "shmed_test <timeout> <times>\n");
+        goto end;
     }
+
+    {
+        long timeout = strtol(argv[0], nullptr, 10);
+        long count = strtol(argv[1], nullptr, 10);
+        for (int i = 0; i < count; i++) {
+            switch_time_t before = switch_time_now(); //switch_time_ref();
+            switch_micro_sleep(timeout);
+            switch_time_t after = switch_time_now(); //switch_time_ref();
+            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "sleep %ld mss\n", after - before);
+        }
+    }
+end:
     switch_core_destroy_memory_pool(&pool);
     return SWITCH_STATUS_SUCCESS;
 }
