@@ -108,6 +108,17 @@ static switch_bool_t handle_read_media_bug(switch_media_bug_t *bug, shmed_bug_t 
 
             // update newest block id to notify peer
             update_block_idx(block_idx);
+
+            char *unique_id = strdup(switch_channel_get_uuid(channel));
+            switch_event_t *event = nullptr;
+            if (switch_event_create(&event, SWITCH_EVENT_CUSTOM) == SWITCH_STATUS_SUCCESS) {
+                switch_event_set_subclass_name(event, "share_media");
+                switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "Unique-ID", unique_id);
+                switch_event_add_header(event, SWITCH_STACK_BOTTOM, "shm-tm", "%ld", switch_micro_time_now());
+                switch_event_fire(&event);
+            }
+            switch_safe_free(unique_id);
+
         } else {
             switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: no valid block, drop frame %d bytes\n",
                               switch_channel_get_uuid(channel), frame.datalen);
