@@ -88,7 +88,7 @@ static switch_bool_t handle_read_media_bug(switch_media_bug_t *bug, shmed_bug_t 
             (Length=31)     (Ready)         (Timestamp: 100000 μs)                  ("Hello" in ASCII)
         */
 
-        switch_time_t now_tm = switch_time_ref(); //switch_micro_time_now();
+        switch_time_t now_tm = switch_time_now(); //switch_time_ref(); //switch_micro_time_now();
         uint16_t size = (uint16_t)(4 + sizeof(switch_time_t) /* timestamp: 8 bytes */ + frame.datalen);
         if (size > BLOCK_SIZE - 2) {
             switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: handle_read_media_bug => frame.datalen:%d exceed block size, ignore!\n",
@@ -278,7 +278,7 @@ SWITCH_STANDARD_API(shmed_handled_function) {
     }
 
     const long start_mss = strtol(cmd, nullptr, 10);
-    const long now = switch_time_ref(); //switch_micro_time_now();
+    const long now = switch_time_now(); //switch_time_ref(); //switch_micro_time_now();
     switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "handle block delay %ld mss\n", now - start_mss);
     return SWITCH_STATUS_SUCCESS;
 }
@@ -303,9 +303,9 @@ SWITCH_STANDARD_API(shmed_test_function) {
     long count = strtol(argv[1], nullptr, 10);
     long timeout = strtol(argv[0], nullptr, 10);
     for (int i = 0; i < count; i++) {
-        switch_time_t before = switch_time_ref();
+        switch_time_t before = switch_time_now(); //switch_time_ref();
         switch_micro_sleep(timeout);
-        switch_time_t after = switch_time_ref();
+        switch_time_t after = switch_time_now(); //switch_time_ref();
         switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "sleep %ld mss\n", after - before);
     }
     switch_core_destroy_memory_pool(&pool);
