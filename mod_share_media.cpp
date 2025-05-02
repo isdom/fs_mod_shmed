@@ -255,6 +255,24 @@ switch_state_handler_table_t shmed_cs_handlers = {
 
 const size_t BUFFER_SIZE = BLOCK_SIZE * BLOCK_COUNT;
 
+// shmed_tmdiff timestampInMs
+SWITCH_STANDARD_API(shmed_tmdiff_function) {
+    if (zstr(cmd)) {
+        stream->write_function(stream, "shmed_tmdiff: parameter missing.\n");
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "shmed_tmdiff: parameter missing.\n");
+        return SWITCH_STATUS_SUCCESS;
+    }
+
+    switch_event_t *event = nullptr;
+    if (switch_event_create(&event, SWITCH_EVENT_CUSTOM) == SWITCH_STATUS_SUCCESS) {
+        switch_event_set_subclass_name(event, "tm_diff");
+        switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "org_tm", cmd);
+        switch_event_fire(&event);
+    }
+
+    return SWITCH_STATUS_SUCCESS;
+}
+
 /**
  *  定义load函数，加载时运行
  */
@@ -263,6 +281,14 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_shmed_load) {
     *module_interface = switch_loadable_module_create_module_interface(pool, modname);
 
     switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "mod_shmed load starting\n");
+
+    // register API
+
+    SWITCH_ADD_API(api_interface,
+                   "shmed_tmdiff",
+                   "shmed_tmdiff_function api",
+                   shmed_tmdiff_function,
+                   "<cmd><args>");
 
     switch_mutex_init(&shm_mutex, SWITCH_MUTEX_NESTED, pool);
 
