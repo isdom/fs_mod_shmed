@@ -4,6 +4,8 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
+bool g_shm_enable = true;
+
 const int BLOCK_SIZE = 512;
 const int BLOCK_COUNT = 1024 * 1024;
 int shm_fd;
@@ -194,20 +196,22 @@ static void shmed_hook_session(switch_core_session_t *session) {
 }
 
 static void on_channel_progress_media(switch_event_t *event) {
-    switch_event_header_t *hdr;
-    const char *uuid;
+    if (g_shm_enable) {
+        switch_event_header_t *hdr;
+        const char *uuid;
 
-    hdr = switch_event_get_header_ptr(event, "Unique-ID");
-    uuid = hdr->value;
-    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "on_channel_progress_media: uuid: %s", uuid);
+        hdr = switch_event_get_header_ptr(event, "Unique-ID");
+        uuid = hdr->value;
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "on_channel_progress_media: uuid: %s", uuid);
 
-    switch_core_session *session  = switch_core_session_force_locate(uuid);
-    if (!session) {
-        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "on_channel_progress_media: locate session [%s] failed, maybe ended\n",
-                          uuid);
-    } else {
-        shmed_hook_session(session);
-        switch_core_session_rwunlock(session);
+        switch_core_session *session  = switch_core_session_force_locate(uuid);
+        if (!session) {
+            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "on_channel_progress_media: locate session [%s] failed, maybe ended\n",
+                              uuid);
+        } else {
+            shmed_hook_session(session);
+            switch_core_session_rwunlock(session);
+        }
     }
 }
 
@@ -281,6 +285,25 @@ end:
     return SWITCH_STATUS_SUCCESS;
 }
 
+#define SHMED_ENABLE_SYNTAX "<on|off>"
+
+SWITCH_STANDARD_API(mod_shmed_enable) {
+    if (zstr(cmd)) {
+        stream->write_function(stream, "-USAGE: %s\n", SHMED_ENABLE_SYNTAX);
+    } else {
+        if (!strcasecmp(cmd, "on")) {
+            g_shm_enable = true;
+            stream->write_function(stream, "shmed enabled\n");
+        } else if (!strcasecmp(cmd, "off")) {
+            g_shm_enable = false;
+            stream->write_function(stream, "shmed disabled\n");
+        } else {
+            stream->write_function(stream, "-USAGE: %s\n", SHMED_ENABLE_SYNTAX);
+        }
+    }
+    return SWITCH_STATUS_SUCCESS;
+}
+
 /**
  *  定义load函数，加载时运行
  */
@@ -309,6 +332,12 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_shmed_load) {
                    "shmed_test api",
                    shmed_test_function,
                    "<cmd><args>");
+
+    SWITCH_ADD_API(api_interface,
+                   "shmed",
+                   "Set shmed feature enabled | disabled",
+                   mod_shmed_enable,
+                   SHMED_ENABLE_SYNTAX);
 
     switch_mutex_init(&shm_mutex, SWITCH_MUTEX_NESTED, pool);
 
