@@ -175,7 +175,11 @@ static void shmed_hook_session(switch_core_session_t *session) {
         return;
     }
 
-    auto pvt = (shmed_bug_t*)switch_core_session_alloc(session, sizeof(shmed_bug_t));
+    auto pvt = (shmed_bug_t *)switch_channel_get_private(channel, "shmed_bug");
+    if (pvt != nullptr) {
+        return;
+    }
+    pvt = (shmed_bug_t*)switch_core_session_alloc(session, sizeof(shmed_bug_t));
     pvt->local_idx = (int32_t)strtol(str_idx, nullptr, 10);
     pvt->session = session;
 
@@ -192,6 +196,7 @@ static void shmed_hook_session(switch_core_session_t *session) {
         // 因此, 如果媒体处理出现异常，应该以及 在 media bug callback 中返回 SWITCH_FALSE
         return;
     }
+    switch_channel_set_private(channel, "shmed_bug", pvt);
     switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO,"[%s], shmed_hook_session\n", switch_channel_get_name(channel));
 }
 
@@ -207,6 +212,26 @@ static void on_channel_progress_media(switch_event_t *event) {
         switch_core_session *session  = switch_core_session_force_locate(uuid);
         if (!session) {
             switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "on_channel_progress_media: locate session [%s] failed, maybe ended\n",
+                              uuid);
+        } else {
+            shmed_hook_session(session);
+            switch_core_session_rwunlock(session);
+        }
+    }
+}
+
+static void on_channel_answer(switch_event_t *event) {
+    if (g_shm_enable) {
+        switch_event_header_t *hdr;
+        const char *uuid;
+
+        hdr = switch_event_get_header_ptr(event, "Unique-ID");
+        uuid = hdr->value;
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "on_channel_answer: uuid: %s", uuid);
+
+        switch_core_session *session  = switch_core_session_force_locate(uuid);
+        if (!session) {
+            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "on_channel_answer: locate session [%s] failed, maybe ended\n",
                               uuid);
         } else {
             shmed_hook_session(session);
@@ -359,6 +384,10 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_shmed_load) {
         if (switch_event_bind(modname, SWITCH_EVENT_CHANNEL_PROGRESS_MEDIA, SWITCH_EVENT_SUBCLASS_ANY,
                               on_channel_progress_media, nullptr) != SWITCH_STATUS_SUCCESS) {
             switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Bind SWITCH_EVENT_CHANNEL_PROGRESS_MEDIA event failed!\n");
+        }
+        if (switch_event_bind(modname, SWITCH_EVENT_CHANNEL_ANSWER, SWITCH_EVENT_SUBCLASS_ANY,
+                              on_channel_answer, nullptr) != SWITCH_STATUS_SUCCESS) {
+            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Bind SWITCH_EVENT_CHANNEL_ANSWER event failed!\n");
         }
     }
 
