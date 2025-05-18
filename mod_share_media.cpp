@@ -163,8 +163,8 @@ static switch_bool_t share_media_bug_hook(switch_media_bug_t *bug, shmed_bug_t *
 }
 
 static void shmed_hook_session(switch_core_session_t *session) {
-    switch_channel_t *channel = switch_core_session_get_channel(session);
     switch_status_t status = SWITCH_STATUS_SUCCESS;
+    switch_channel_t *channel = switch_core_session_get_channel(session);
 
     const char *str_idx = switch_channel_get_variable(channel, "local_idx");
     if (!str_idx) {
@@ -177,6 +177,8 @@ static void shmed_hook_session(switch_core_session_t *session) {
 
     auto pvt = (shmed_bug_t *)switch_channel_get_private(channel, "shmed_bug");
     if (pvt != nullptr) {
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO,"[%s]: session_has_hook_shared_media_already\n",
+                          switch_channel_get_uuid(channel));
         return;
     }
     pvt = (shmed_bug_t*)switch_core_session_alloc(session, sizeof(shmed_bug_t));
@@ -197,7 +199,8 @@ static void shmed_hook_session(switch_core_session_t *session) {
         return;
     }
     switch_channel_set_private(channel, "shmed_bug", pvt);
-    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO,"[%s], shmed_hook_session\n", switch_channel_get_name(channel));
+    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO,"[%s] session_hook_shared_media_success\n",
+                      switch_channel_get_uuid(channel));
 }
 
 static void on_channel_progress_media(switch_event_t *event) {
