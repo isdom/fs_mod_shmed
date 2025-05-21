@@ -68,10 +68,12 @@ typedef struct {
     int32_t  local_idx;
     switch_core_session_t *session;
     switch_media_bug_t *bug;
+    switch_audio_resampler_t *re_sampler;
 } shmed_bug_t;
 
 static switch_bool_t handle_read_media_bug(switch_media_bug_t *bug, shmed_bug_t *pvt, switch_channel_t *channel) {
     uint8_t data[SWITCH_RECOMMENDED_BUFFER_SIZE];
+    uint32_t data_len;
     switch_frame_t frame = {nullptr};
     frame.data = data;
     frame.buflen = sizeof(data);
@@ -80,6 +82,14 @@ static switch_bool_t handle_read_media_bug(switch_media_bug_t *bug, shmed_bug_t 
                           switch_channel_get_uuid(channel));
         return SWITCH_TRUE;
     } else {
+        data_len = frame.datalen;
+        if (pvt->re_sampler) {
+            //====== resample ==== ///
+            switch_resample_process(pvt->re_sampler, (int16_t *) data, (int) data_len / 2 / 1);
+            memcpy(data, pvt->re_sampler->to, pvt->re_sampler->to_len * 2 * 1);
+            data_len = pvt->re_sampler->to_len * 2 * 1;
+        }
+
         /*
          +---------------+---------------+---------------+---------------+---------------+-...-+---------------+
          |  Length: 2B   | LocalIdx:4B   |        Timestamp (8B)         |        Payload (N Bytes)            |
@@ -93,37 +103,26 @@ static switch_bool_t handle_read_media_bug(switch_media_bug_t *bug, shmed_bug_t 
         */
 
         switch_time_t now_tm = switch_time_now(); //switch_time_ref(); //switch_micro_time_now();
-        uint16_t size = (uint16_t)(4 + sizeof(switch_time_t) /* timestamp: 8 bytes */ + frame.datalen);
+        uint16_t size = (uint16_t)(4 + sizeof(switch_time_t) /* timestamp: 8 bytes */ + data_len);
         if (size > BLOCK_SIZE - 2) {
-            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: handle_read_media_bug => frame.datalen:%d exceed block size, ignore!\n",
+            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: handle_read_media_bug => datalen:%d exceed block size, ignore!\n",
                               switch_channel_get_uuid(channel), size);
             return SWITCH_TRUE;
         }
 
         int block_idx = shmed_alloc_block(size, channel);
         if (block_idx > 0) {
-            //switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "[%s]: store frame %d bytes to block [%d]\n",
-            //                  switch_channel_get_uuid(channel), frame.datalen, block_idx);
             uint8_t *data_ptr = shm_ptr + block_idx * BLOCK_SIZE + 2; // skip 2 bytes for size
             memcpy(data_ptr + sizeof(int32_t), &now_tm, sizeof(switch_time_t));
-            memcpy(data_ptr + sizeof(int32_t) + sizeof(switch_time_t), frame.data, frame.datalen);
+            memcpy(data_ptr + sizeof(int32_t) + sizeof(switch_time_t), data, data_len);
             // set local idx for block
             memcpy(data_ptr, &pvt->local_idx, sizeof(int32_t));
 
             // update the newest block id to 0 block: notify local agent
             update_block_idx(block_idx);
-
-            /*
-            switch_event_t *event = nullptr;
-            if (switch_event_create(&event, SWITCH_EVENT_CUSTOM) == SWITCH_STATUS_SUCCESS) {
-                switch_event_set_subclass_name(event, "shmed_blkwt");
-                switch_event_add_header(event, SWITCH_STACK_BOTTOM, "block-idx", "%d", block_idx);
-                switch_event_fire(&event);
-            }
-            */
         } else {
             switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: no valid block, drop frame %d bytes\n",
-                              switch_channel_get_uuid(channel), frame.datalen);
+                              switch_channel_get_uuid(channel), data_len);
         }
     }
     return SWITCH_TRUE;
@@ -162,6 +161,86 @@ static switch_bool_t share_media_bug_hook(switch_media_bug_t *bug, shmed_bug_t *
     return SWITCH_TRUE;
 }
 
+static switch_status_t shmed_cleanup_on_channel_destroy(switch_core_session_t *session);
+
+const static switch_state_handler_table_t session_shmed_handlers = {
+        /*! executed when the state changes to init */
+        // switch_state_handler_t on_init;
+        nullptr,
+        /*! executed when the state changes to routing */
+        // switch_state_handler_t on_routing;
+        nullptr,
+        /*! executed when the state changes to execute */
+        // switch_state_handler_t on_execute;
+        nullptr,
+        /*! executed when the state changes to hangup */
+        // switch_state_handler_t on_hangup;
+        nullptr,
+        /*! executed when the state changes to exchange_media */
+        // switch_state_handler_t on_exchange_media;
+        nullptr,
+        /*! executed when the state changes to soft_execute */
+        // switch_state_handler_t on_soft_execute;
+        nullptr,
+        /*! executed when the state changes to consume_media */
+        // switch_state_handler_t on_consume_media;
+        nullptr,
+        /*! executed when the state changes to hibernate */
+        // switch_state_handler_t on_hibernate;
+        nullptr,
+        /*! executed when the state changes to reset */
+        // switch_state_handler_t on_reset;
+        nullptr,
+        /*! executed when the state changes to park */
+        // switch_state_handler_t on_park;
+        nullptr,
+        /*! executed when the state changes to reporting */
+        // switch_state_handler_t on_reporting;
+        nullptr,
+        /*! executed when the state changes to destroy */
+        // switch_state_handler_t on_destroy;
+        shmed_cleanup_on_channel_destroy,
+        // int flags;
+        0
+};
+
+static switch_status_t shmed_cleanup_on_channel_destroy(switch_core_session_t *session) {
+    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE,
+                      "shmed_cleanup_on_channel_destroy: try to cleanup shmed_bug on session [%s] destroy\n",
+                      switch_core_session_get_uuid(session));
+    switch_core_session_write_lock(session);
+    switch_channel_t *channel = switch_core_session_get_channel(session);
+    auto pvt = (shmed_bug_t *)switch_channel_get_private(channel, "shmed_bug");
+    if (!pvt) {
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "shmed_cleanup_on_channel_destroy: [%s]'s shmed_bug is nullptr\n",
+                          switch_core_session_get_uuid(session));
+        goto unlock;
+    }
+    switch_channel_set_private(channel, "shmed_bug", nullptr);
+    if (pvt->bug) {
+        if (SWITCH_STATUS_SUCCESS != switch_core_media_bug_remove(session, &(pvt->bug)) ) {
+            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING,
+                              "shmed_cleanup_on_channel_destroy: failed to switch_core_media_bug_remove: %s\n",
+                              switch_core_session_get_uuid(session));
+        }
+    }
+
+    if (pvt->re_sampler) {
+        switch_resample_destroy(&(pvt->re_sampler));
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "[%s]: shmed_cleanup_on_channel_destroy: switch_resample_destroy\n",
+                          switch_core_session_get_uuid(session));
+        pvt->re_sampler = nullptr;
+    }
+
+    switch_channel_clear_state_handler(channel, &session_shmed_handlers);
+
+unlock:
+    switch_core_session_rwunlock(session);
+    return SWITCH_STATUS_SUCCESS;
+}
+
+#define SAMPLE_RATE 8000
+
 static void shmed_hook_session(switch_core_session_t *session) {
     switch_status_t status = SWITCH_STATUS_SUCCESS;
     switch_channel_t *channel = switch_core_session_get_channel(session);
@@ -181,9 +260,39 @@ static void shmed_hook_session(switch_core_session_t *session) {
                           switch_channel_get_uuid(channel));
         return;
     }
+
+    //  switch_channel_add_state_handler's return value: the index number/priority of the table negative value indicates failure
+    if (switch_channel_add_state_handler(channel, &session_shmed_handlers) < 0) {
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: hook channel state change failed\n",
+                          switch_channel_get_uuid(channel));
+        return;
+    }
+
+    switch_audio_resampler_t *re_sampler = nullptr;
+    switch_codec_implementation_t read_impl;
+    memset(&read_impl, 0, sizeof(switch_codec_implementation_t));
+    switch_core_session_get_read_impl(session, &read_impl);
+    if (read_impl.actual_samples_per_second != SAMPLE_RATE) {
+        if (switch_resample_create(&re_sampler,
+                                   read_impl.actual_samples_per_second,
+                                   SAMPLE_RATE,
+                                   16 * (read_impl.microseconds_per_packet / 1000) * 2,
+                                   SWITCH_RESAMPLE_QUALITY,
+                                   1) != SWITCH_STATUS_SUCCESS) {
+            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: shmed_hook_session Unable to allocate re_sampler, ignore this session\n",
+                              switch_channel_get_uuid(channel));
+            return;
+        }
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE,
+                          "[%s]: create re-sampler bcs of media sampler/s is %d but shmed support: %d, while ms/p: %d\n",
+                          switch_channel_get_uuid(channel), read_impl.actual_samples_per_second, SAMPLE_RATE, read_impl.microseconds_per_packet);
+    }
+
     pvt = (shmed_bug_t*)switch_core_session_alloc(session, sizeof(shmed_bug_t));
     pvt->local_idx = (int32_t)strtol(str_idx, nullptr, 10);
     pvt->session = session;
+    pvt->re_sampler = re_sampler;
+    pvt->bug = nullptr;
 
     // 对 session 添加 media bug
     if ((status = switch_core_media_bug_add(session, "shmed", nullptr,
@@ -198,6 +307,7 @@ static void shmed_hook_session(switch_core_session_t *session) {
         // 因此, 如果媒体处理出现异常，应该以及 在 media bug callback 中返回 SWITCH_FALSE
         return;
     }
+
     switch_channel_set_private(channel, "shmed_bug", pvt);
     switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO,"[%s] session_hook_shared_media_success\n",
                       switch_channel_get_uuid(channel));
