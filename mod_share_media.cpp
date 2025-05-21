@@ -240,6 +240,14 @@ unlock:
     return SWITCH_STATUS_SUCCESS;
 }
 
+void dump_event(switch_event_t *event) {
+    char *buf;
+
+    switch_event_serialize(event, &buf, SWITCH_TRUE);
+    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "\nEVENT (text version)\n--------------------------------\n%s", buf);
+    switch_safe_free(buf);
+}
+
 static switch_status_t shmed_on_consume_media(switch_core_session_t *session) {
     switch_status_t status = SWITCH_STATUS_SUCCESS;
 
@@ -344,6 +352,7 @@ static void shmed_hook_session(switch_core_session_t *session) {
 }
 
 static void on_event_codec(switch_event_t *event) {
+    dump_event(event);
     if (g_shm_enable) {
         switch_event_header_t *hdr;
         const char *uuid;
