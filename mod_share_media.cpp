@@ -271,21 +271,25 @@ static void shmed_hook_session(switch_core_session_t *session) {
     switch_audio_resampler_t *re_sampler = nullptr;
     switch_codec_implementation_t read_impl;
     memset(&read_impl, 0, sizeof(switch_codec_implementation_t));
-    switch_core_session_get_read_impl(session, &read_impl);
-    if (read_impl.actual_samples_per_second != SAMPLE_RATE) {
-        if (switch_resample_create(&re_sampler,
-                                   read_impl.actual_samples_per_second,
-                                   SAMPLE_RATE,
-                                   16 * (read_impl.microseconds_per_packet / 1000) * 2,
-                                   SWITCH_RESAMPLE_QUALITY,
-                                   1) != SWITCH_STATUS_SUCCESS) {
-            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: shmed_hook_session Unable to allocate re_sampler, ignore this session\n",
-                              switch_channel_get_uuid(channel));
-            return;
+    if ((status = switch_core_session_get_read_impl(session, &read_impl)) == SWITCH_STATUS_SUCCESS) {
+        if (read_impl.actual_samples_per_second != SAMPLE_RATE) {
+            if (switch_resample_create(&re_sampler,
+                                       read_impl.actual_samples_per_second,
+                                       SAMPLE_RATE,
+                                       16 * (read_impl.microseconds_per_packet / 1000) * 2,
+                                       SWITCH_RESAMPLE_QUALITY,
+                                       1) != SWITCH_STATUS_SUCCESS) {
+                switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: shmed_hook_session Unable to allocate re_sampler, ignore this session\n",
+                                  switch_channel_get_uuid(channel));
+                return;
+            }
+            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE,
+                              "[%s]: create re-sampler bcs of media sampler/s is %d but shmed support: %d, while ms/p: %d\n",
+                              switch_channel_get_uuid(channel), read_impl.actual_samples_per_second, SAMPLE_RATE, read_impl.microseconds_per_packet);
         }
-        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE,
-                          "[%s]: create re-sampler bcs of media sampler/s is %d but shmed support: %d, while ms/p: %d\n",
-                          switch_channel_get_uuid(channel), read_impl.actual_samples_per_second, SAMPLE_RATE, read_impl.microseconds_per_packet);
+    } else {
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "[%s]: shmed_hook_session => switch_core_session_get_read_impl return %d, disable re-sample\n",
+                          switch_channel_get_uuid(channel), status);
     }
 
     pvt = (shmed_bug_t*)switch_core_session_alloc(session, sizeof(shmed_bug_t));
