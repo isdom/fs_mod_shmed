@@ -162,7 +162,6 @@ static switch_bool_t share_media_bug_hook(switch_media_bug_t *bug, shmed_bug_t *
 }
 
 static switch_status_t shmed_cleanup_on_channel_destroy(switch_core_session_t *session);
-static switch_status_t shmed_on_consume_media(switch_core_session_t *session);
 
 const static switch_state_handler_table_t session_shmed_handlers = {
         /*! executed when the state changes to init */
@@ -240,34 +239,34 @@ unlock:
     return SWITCH_STATUS_SUCCESS;
 }
 
-void dump_event(switch_event_t *event) {
-    char *buf;
+//void dump_event(switch_event_t *event) {
+//    char *buf;
+//
+//    switch_event_serialize(event, &buf, SWITCH_TRUE);
+//    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "\nEVENT (text version)\n--------------------------------\n%s", buf);
+//    switch_safe_free(buf);
+//}
 
-    switch_event_serialize(event, &buf, SWITCH_TRUE);
-    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "\nEVENT (text version)\n--------------------------------\n%s", buf);
-    switch_safe_free(buf);
-}
-
-static switch_status_t shmed_on_consume_media(switch_core_session_t *session) {
-    switch_status_t status = SWITCH_STATUS_SUCCESS;
-
-    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "[%s] shmed_on_consume_media\n",
-                      switch_core_session_get_uuid(session));
-
-    switch_codec_implementation_t read_impl;
-    memset(&read_impl, 0, sizeof(switch_codec_implementation_t));
-    if ((status = switch_core_session_get_read_impl(session, &read_impl)) == SWITCH_STATUS_SUCCESS) {
-        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE,
-                          "[%s]:  media sampler/s is %d  while ms/p: %d\n",
-                          switch_core_session_get_uuid(session), read_impl.actual_samples_per_second, read_impl.microseconds_per_packet);
-    } else {
-        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING,
-                          "[%s]: shmed_on_consume_media => switch_core_session_get_read_impl return %d\n",
-                          switch_core_session_get_uuid(session), status);
-    }
-
-    return SWITCH_STATUS_SUCCESS;
-}
+//static switch_status_t shmed_on_consume_media(switch_core_session_t *session) {
+//    switch_status_t status = SWITCH_STATUS_SUCCESS;
+//
+//    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "[%s] shmed_on_consume_media\n",
+//                      switch_core_session_get_uuid(session));
+//
+//    switch_codec_implementation_t read_impl;
+//    memset(&read_impl, 0, sizeof(switch_codec_implementation_t));
+//    if ((status = switch_core_session_get_read_impl(session, &read_impl)) == SWITCH_STATUS_SUCCESS) {
+//        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE,
+//                          "[%s]:  media sampler/s is %d  while ms/p: %d\n",
+//                          switch_core_session_get_uuid(session), read_impl.actual_samples_per_second, read_impl.microseconds_per_packet);
+//    } else {
+//        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING,
+//                          "[%s]: shmed_on_consume_media => switch_core_session_get_read_impl return %d\n",
+//                          switch_core_session_get_uuid(session), status);
+//    }
+//
+//    return SWITCH_STATUS_SUCCESS;
+//}
 
 #define SAMPLE_RATE 8000
 
@@ -302,28 +301,30 @@ static void shmed_hook_session(switch_core_session_t *session) {
     //                      switch_core_session_get_uuid(session), idx);
     //}
 
-    switch_audio_resampler_t *re_sampler = nullptr;
     switch_codec_implementation_t read_impl;
     memset(&read_impl, 0, sizeof(switch_codec_implementation_t));
-    if ((status = switch_core_session_get_read_impl(session, &read_impl)) == SWITCH_STATUS_SUCCESS) {
-        if (read_impl.actual_samples_per_second != SAMPLE_RATE) {
-            if (switch_resample_create(&re_sampler,
-                                       read_impl.actual_samples_per_second,
-                                       SAMPLE_RATE,
-                                       16 * (read_impl.microseconds_per_packet / 1000) * 2,
-                                       SWITCH_RESAMPLE_QUALITY,
-                                       1) != SWITCH_STATUS_SUCCESS) {
-                switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: shmed_hook_session Unable to allocate re_sampler, ignore this session\n",
-                                  switch_channel_get_uuid(channel));
-                return;
-            }
-            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE,
-                              "[%s]: create re-sampler bcs of media sampler/s is %d but shmed support: %d, while ms/p: %d\n",
-                              switch_channel_get_uuid(channel), read_impl.actual_samples_per_second, SAMPLE_RATE, read_impl.microseconds_per_packet);
+    if ((status = switch_core_session_get_read_impl(session, &read_impl)) != SWITCH_STATUS_SUCCESS) {
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING,
+                          "[%s]: shmed_hook_session => switch_core_session_get_read_impl failed, and return value: %d, skip\n",
+                          switch_core_session_get_uuid(session), status);
+        return;
+    }
+
+    switch_audio_resampler_t *re_sampler = nullptr;
+    if (read_impl.actual_samples_per_second != SAMPLE_RATE) {
+        if (switch_resample_create(&re_sampler,
+                                   read_impl.actual_samples_per_second,
+                                   SAMPLE_RATE,
+                                   16 * (read_impl.microseconds_per_packet / 1000) * 2,
+                                   SWITCH_RESAMPLE_QUALITY,
+                                   1) != SWITCH_STATUS_SUCCESS) {
+            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: shmed_hook_session Unable to allocate re_sampler, ignore this session\n",
+                              switch_channel_get_uuid(channel));
+            return;
         }
-    } else {
-        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "[%s]: shmed_hook_session => switch_core_session_get_read_impl return %d, disable re-sample\n",
-                          switch_channel_get_uuid(channel), status);
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE,
+                          "[%s]: create re-sampler bcs of media sampler/s is %d but shmed support: %d, while ms/p: %d\n",
+                          switch_channel_get_uuid(channel), read_impl.actual_samples_per_second, SAMPLE_RATE, read_impl.microseconds_per_packet);
     }
 
     pvt = (shmed_bug_t*)switch_core_session_alloc(session, sizeof(shmed_bug_t));
@@ -343,16 +344,16 @@ static void shmed_hook_session(switch_core_session_t *session) {
         // SWITCH_ABC_TYPE_READ 调用逻辑参考：https://github.com/signalwire/freeswitch/blob/79ce08810120b681992a3e666bcbe8d2ac2a7383/src/switch_core_io.c#L748
         // 如上述代码中所示，当 switch_media_bug_callback_t 返回值为：SWITCH_FALSE 时，该 media bug 都会被立即从 bug 链表中删除
         // 因此, 如果媒体处理出现异常，应该以及 在 media bug callback 中返回 SWITCH_FALSE
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: shmed_hook_session Unable to switch_core_media_bug_add, and return value: %d, skip\n",
+                          switch_channel_get_uuid(channel), status);
         return;
     }
 
     switch_channel_set_private(channel, "shmed_bug", pvt);
-    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO,"[%s] session_hook_shared_media_success\n",
-                      switch_channel_get_uuid(channel));
+    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO,"[%s] session_hook_shared_media_success\n", switch_channel_get_uuid(channel));
 }
 
 static void on_event_codec(switch_event_t *event) {
-    dump_event(event);
     if (g_shm_enable) {
         switch_event_header_t *hdr;
         const char *uuid;
@@ -366,8 +367,7 @@ static void on_event_codec(switch_event_t *event) {
             switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "on_event_codec: locate session [%s] failed, maybe ended\n",
                               uuid);
         } else {
-            // shmed_hook_session(session);
-            shmed_on_consume_media(session);
+            shmed_hook_session(session);
             switch_core_session_rwunlock(session);
         }
     }
@@ -555,16 +555,14 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_shmed_load) {
         // register global state handlers
         switch_core_add_state_handler(&session_shmed_handlers);
 
-        // register global state handlers
-        // switch_core_add_state_handler(&shmed_cs_handlers);
-        if (switch_event_bind(modname, SWITCH_EVENT_CHANNEL_PROGRESS_MEDIA, SWITCH_EVENT_SUBCLASS_ANY,
-                              on_channel_progress_media, nullptr) != SWITCH_STATUS_SUCCESS) {
-            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Bind SWITCH_EVENT_CHANNEL_PROGRESS_MEDIA event failed!\n");
-        }
-        if (switch_event_bind(modname, SWITCH_EVENT_CHANNEL_ANSWER, SWITCH_EVENT_SUBCLASS_ANY,
-                              on_channel_answer, nullptr) != SWITCH_STATUS_SUCCESS) {
-            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Bind SWITCH_EVENT_CHANNEL_ANSWER event failed!\n");
-        }
+//        if (switch_event_bind(modname, SWITCH_EVENT_CHANNEL_PROGRESS_MEDIA, SWITCH_EVENT_SUBCLASS_ANY,
+//                              on_channel_progress_media, nullptr) != SWITCH_STATUS_SUCCESS) {
+//            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Bind SWITCH_EVENT_CHANNEL_PROGRESS_MEDIA event failed!\n");
+//        }
+//        if (switch_event_bind(modname, SWITCH_EVENT_CHANNEL_ANSWER, SWITCH_EVENT_SUBCLASS_ANY,
+//                              on_channel_answer, nullptr) != SWITCH_STATUS_SUCCESS) {
+//            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Bind SWITCH_EVENT_CHANNEL_ANSWER event failed!\n");
+//        }
 
         if (switch_event_bind(modname, SWITCH_EVENT_CODEC, SWITCH_EVENT_SUBCLASS_ANY,
                               on_event_codec, nullptr) != SWITCH_STATUS_SUCCESS) {
@@ -585,7 +583,6 @@ SWITCH_MODULE_SHUTDOWN_FUNCTION(mod_shmed_shutdown) {
     switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, " mod_shmed shutdown called\n");
 
     // unregister global state handlers
-    // switch_core_remove_state_handler(&shmed_cs_handlers);
     switch_core_remove_state_handler(&session_shmed_handlers);
 
     // 清理
