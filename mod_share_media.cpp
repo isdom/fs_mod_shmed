@@ -162,6 +162,7 @@ static switch_bool_t share_media_bug_hook(switch_media_bug_t *bug, shmed_bug_t *
 }
 
 static switch_status_t shmed_cleanup_on_channel_destroy(switch_core_session_t *session);
+static switch_status_t shmed_on_consume_media(switch_core_session_t *session);
 
 const static switch_state_handler_table_t session_shmed_handlers = {
         /*! executed when the state changes to init */
@@ -184,7 +185,7 @@ const static switch_state_handler_table_t session_shmed_handlers = {
         nullptr,
         /*! executed when the state changes to consume_media */
         // switch_state_handler_t on_consume_media;
-        nullptr,
+        shmed_on_consume_media,
         /*! executed when the state changes to hibernate */
         // switch_state_handler_t on_hibernate;
         nullptr,
@@ -232,10 +233,31 @@ static switch_status_t shmed_cleanup_on_channel_destroy(switch_core_session_t *s
         pvt->re_sampler = nullptr;
     }
 
-    switch_channel_clear_state_handler(channel, &session_shmed_handlers);
+    // switch_channel_clear_state_handler(channel, &session_shmed_handlers);
 
 unlock:
     switch_core_session_rwunlock(session);
+    return SWITCH_STATUS_SUCCESS;
+}
+
+static switch_status_t shmed_on_consume_media(switch_core_session_t *session) {
+    switch_status_t status = SWITCH_STATUS_SUCCESS;
+
+    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "[%s] shmed_on_consume_media\n",
+                      switch_core_session_get_uuid(session));
+
+    switch_codec_implementation_t read_impl;
+    memset(&read_impl, 0, sizeof(switch_codec_implementation_t));
+    if ((status = switch_core_session_get_read_impl(session, &read_impl)) == SWITCH_STATUS_SUCCESS) {
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE,
+                          "[%s]:  media sampler/s is %d  while ms/p: %d\n",
+                          switch_core_session_get_uuid(session), read_impl.actual_samples_per_second, read_impl.microseconds_per_packet);
+    } else {
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING,
+                          "[%s]: shmed_on_consume_media => switch_core_session_get_read_impl return %d\n",
+                          switch_core_session_get_uuid(session), status);
+    }
+
     return SWITCH_STATUS_SUCCESS;
 }
 
@@ -262,15 +284,15 @@ static void shmed_hook_session(switch_core_session_t *session) {
     }
 
     //  switch_channel_add_state_handler's return value: the index number/priority of the table negative value indicates failure
-    int idx = 0;
-    if ((idx = switch_channel_add_state_handler(channel, &session_shmed_handlers)) < 0) {
-        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: hook channel state change failed\n",
-                          switch_channel_get_uuid(channel));
-        return;
-    } else {
-        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "[%s]: switch_channel_add_state_handler return idx %d",
-                          switch_core_session_get_uuid(session), idx);
-    }
+    //int idx = 0;
+    //if ((idx = switch_channel_add_state_handler(channel, &session_shmed_handlers)) < 0) {
+    //    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: hook channel state change failed\n",
+    //                      switch_channel_get_uuid(channel));
+    //    return;
+    //} else {
+    //    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "[%s]: switch_channel_add_state_handler return idx %d",
+    //                      switch_core_session_get_uuid(session), idx);
+    //}
 
     switch_audio_resampler_t *re_sampler = nullptr;
     switch_codec_implementation_t read_impl;
@@ -501,6 +523,9 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_shmed_load) {
         memset(shm_ptr, 0, BUFFER_SIZE);
 
         // register global state handlers
+        switch_core_add_state_handler(&session_shmed_handlers);
+
+        // register global state handlers
         // switch_core_add_state_handler(&shmed_cs_handlers);
         if (switch_event_bind(modname, SWITCH_EVENT_CHANNEL_PROGRESS_MEDIA, SWITCH_EVENT_SUBCLASS_ANY,
                               on_channel_progress_media, nullptr) != SWITCH_STATUS_SUCCESS) {
@@ -525,6 +550,7 @@ SWITCH_MODULE_SHUTDOWN_FUNCTION(mod_shmed_shutdown) {
 
     // unregister global state handlers
     // switch_core_remove_state_handler(&shmed_cs_handlers);
+    switch_core_remove_state_handler(&session_shmed_handlers);
 
     // 清理
     if (shm_fd != -1) {
