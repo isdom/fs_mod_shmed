@@ -185,7 +185,7 @@ const static switch_state_handler_table_t session_shmed_handlers = {
         nullptr,
         /*! executed when the state changes to consume_media */
         // switch_state_handler_t on_consume_media;
-        shmed_on_consume_media,
+        nullptr,
         /*! executed when the state changes to hibernate */
         // switch_state_handler_t on_hibernate;
         nullptr,
@@ -341,6 +341,27 @@ static void shmed_hook_session(switch_core_session_t *session) {
     switch_channel_set_private(channel, "shmed_bug", pvt);
     switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO,"[%s] session_hook_shared_media_success\n",
                       switch_channel_get_uuid(channel));
+}
+
+static void on_event_codec(switch_event_t *event) {
+    if (g_shm_enable) {
+        switch_event_header_t *hdr;
+        const char *uuid;
+
+        hdr = switch_event_get_header_ptr(event, "Unique-ID");
+        uuid = hdr->value;
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "on_event_codec: uuid: %s", uuid);
+
+        switch_core_session *session  = switch_core_session_force_locate(uuid);
+        if (!session) {
+            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "on_event_codec: locate session [%s] failed, maybe ended\n",
+                              uuid);
+        } else {
+            // shmed_hook_session(session);
+            shmed_on_consume_media(session);
+            switch_core_session_rwunlock(session);
+        }
+    }
 }
 
 static void on_channel_progress_media(switch_event_t *event) {
@@ -535,6 +556,12 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_shmed_load) {
                               on_channel_answer, nullptr) != SWITCH_STATUS_SUCCESS) {
             switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Bind SWITCH_EVENT_CHANNEL_ANSWER event failed!\n");
         }
+
+        if (switch_event_bind(modname, SWITCH_EVENT_CODEC, SWITCH_EVENT_SUBCLASS_ANY,
+                              on_event_codec, nullptr) != SWITCH_STATUS_SUCCESS) {
+            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Bind SWITCH_EVENT_CODEC event failed!\n");
+        }
+
     }
 
     switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "mod_shmed loaded\n");
