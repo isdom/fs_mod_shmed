@@ -205,7 +205,7 @@ const static switch_state_handler_table_t session_shmed_handlers = {
 };
 
 static switch_status_t shmed_cleanup_on_channel_destroy(switch_core_session_t *session) {
-    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE,
+    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE,
                       "shmed_cleanup_on_channel_destroy: try to cleanup shmed_bug on session [%s] destroy\n",
                       switch_core_session_get_uuid(session));
     switch_core_session_write_lock(session);
@@ -262,10 +262,14 @@ static void shmed_hook_session(switch_core_session_t *session) {
     }
 
     //  switch_channel_add_state_handler's return value: the index number/priority of the table negative value indicates failure
-    if (switch_channel_add_state_handler(channel, &session_shmed_handlers) < 0) {
+    int idx = 0;
+    if ((idx = switch_channel_add_state_handler(channel, &session_shmed_handlers)) < 0) {
         switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: hook channel state change failed\n",
                           switch_channel_get_uuid(channel));
         return;
+    } else {
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "[%s]: switch_channel_add_state_handler return idx %d",
+                          switch_core_session_get_uuid(session), idx);
     }
 
     switch_audio_resampler_t *re_sampler = nullptr;
