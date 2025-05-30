@@ -239,14 +239,6 @@ unlock:
     return SWITCH_STATUS_SUCCESS;
 }
 
-//void dump_event(switch_event_t *event) {
-//    char *buf;
-//
-//    switch_event_serialize(event, &buf, SWITCH_TRUE);
-//    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "\nEVENT (text version)\n--------------------------------\n%s", buf);
-//    switch_safe_free(buf);
-//}
-
 //static switch_status_t shmed_on_consume_media(switch_core_session_t *session) {
 //    switch_status_t status = SWITCH_STATUS_SUCCESS;
 //
@@ -502,6 +494,26 @@ SWITCH_STANDARD_API(mod_shmed_enable) {
     return SWITCH_STATUS_SUCCESS;
 }
 
+void dump_event(switch_event_t *event) {
+    char *buf;
+
+    switch_event_serialize(event, &buf, SWITCH_TRUE);
+    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "\nEVENT (text version)\n--------------------------------\n%s", buf);
+    switch_safe_free(buf);
+}
+
+static void on_record_start(switch_event_t *event) {
+    dump_event(event);
+}
+
+static void on_playback_start(switch_event_t *event) {
+    dump_event(event);
+}
+
+static void on_playback_stop(switch_event_t *event) {
+    dump_event(event);
+}
+
 /**
  *  定义load函数，加载时运行
  */
@@ -563,6 +575,24 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_shmed_load) {
 //                              on_channel_answer, nullptr) != SWITCH_STATUS_SUCCESS) {
 //            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Bind SWITCH_EVENT_CHANNEL_ANSWER event failed!\n");
 //        }
+
+        // TODO: switch_event_unbind_callback
+        if (switch_event_bind(modname, SWITCH_EVENT_RECORD_START, SWITCH_EVENT_SUBCLASS_ANY,
+                              on_record_start, nullptr) != SWITCH_STATUS_SUCCESS) {
+            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Bind SWITCH_EVENT_RECORD_START event failed!\n");
+        }
+
+        // TODO: switch_event_unbind_callback
+        if (switch_event_bind(modname, SWITCH_EVENT_PLAYBACK_START, SWITCH_EVENT_SUBCLASS_ANY,
+                              on_playback_start, nullptr) != SWITCH_STATUS_SUCCESS) {
+            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Bind SWITCH_EVENT_PLAYBACK_START event failed!\n");
+        }
+
+        // TODO: switch_event_unbind_callback
+        if (switch_event_bind(modname, SWITCH_EVENT_PLAYBACK_STOP, SWITCH_EVENT_SUBCLASS_ANY,
+                              on_playback_stop, nullptr) != SWITCH_STATUS_SUCCESS) {
+            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Bind SWITCH_EVENT_PLAYBACK_STOP event failed!\n");
+        }
 
         if (switch_event_bind(modname, SWITCH_EVENT_CODEC, SWITCH_EVENT_SUBCLASS_ANY,
                               on_event_codec, nullptr) != SWITCH_STATUS_SUCCESS) {
