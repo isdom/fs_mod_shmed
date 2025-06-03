@@ -365,46 +365,6 @@ static void on_event_codec(switch_event_t *event) {
     }
 }
 
-static void on_channel_progress_media(switch_event_t *event) {
-    if (g_shm_enable) {
-        switch_event_header_t *hdr;
-        const char *uuid;
-
-        hdr = switch_event_get_header_ptr(event, "Unique-ID");
-        uuid = hdr->value;
-        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "on_channel_progress_media: uuid: %s", uuid);
-
-        switch_core_session *session  = switch_core_session_force_locate(uuid);
-        if (!session) {
-            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "on_channel_progress_media: locate session [%s] failed, maybe ended\n",
-                              uuid);
-        } else {
-            shmed_hook_session(session);
-            switch_core_session_rwunlock(session);
-        }
-    }
-}
-
-static void on_channel_answer(switch_event_t *event) {
-    if (g_shm_enable) {
-        switch_event_header_t *hdr;
-        const char *uuid;
-
-        hdr = switch_event_get_header_ptr(event, "Unique-ID");
-        uuid = hdr->value;
-        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "on_channel_answer: uuid: %s", uuid);
-
-        switch_core_session *session  = switch_core_session_force_locate(uuid);
-        if (!session) {
-            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "on_channel_answer: locate session [%s] failed, maybe ended\n",
-                              uuid);
-        } else {
-            shmed_hook_session(session);
-            switch_core_session_rwunlock(session);
-        }
-    }
-}
-
 const size_t BUFFER_SIZE = BLOCK_SIZE * BLOCK_COUNT;
 
 // shmed_tmdiff timestampInMs
@@ -566,15 +526,6 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_shmed_load) {
 
         // register global state handlers
         switch_core_add_state_handler(&session_shmed_handlers);
-
-//        if (switch_event_bind(modname, SWITCH_EVENT_CHANNEL_PROGRESS_MEDIA, SWITCH_EVENT_SUBCLASS_ANY,
-//                              on_channel_progress_media, nullptr) != SWITCH_STATUS_SUCCESS) {
-//            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Bind SWITCH_EVENT_CHANNEL_PROGRESS_MEDIA event failed!\n");
-//        }
-//        if (switch_event_bind(modname, SWITCH_EVENT_CHANNEL_ANSWER, SWITCH_EVENT_SUBCLASS_ANY,
-//                              on_channel_answer, nullptr) != SWITCH_STATUS_SUCCESS) {
-//            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Bind SWITCH_EVENT_CHANNEL_ANSWER event failed!\n");
-//        }
 
         // TODO: switch_event_unbind_callback
         if (switch_event_bind(modname, SWITCH_EVENT_RECORD_START, SWITCH_EVENT_SUBCLASS_ANY,
