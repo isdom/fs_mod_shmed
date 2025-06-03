@@ -232,33 +232,10 @@ static switch_status_t shmed_cleanup_on_channel_destroy(switch_core_session_t *s
         pvt->re_sampler = nullptr;
     }
 
-    // switch_channel_clear_state_handler(channel, &session_shmed_handlers);
-
 unlock:
     switch_core_session_rwunlock(session);
     return SWITCH_STATUS_SUCCESS;
 }
-
-//static switch_status_t shmed_on_consume_media(switch_core_session_t *session) {
-//    switch_status_t status = SWITCH_STATUS_SUCCESS;
-//
-//    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "[%s] shmed_on_consume_media\n",
-//                      switch_core_session_get_uuid(session));
-//
-//    switch_codec_implementation_t read_impl;
-//    memset(&read_impl, 0, sizeof(switch_codec_implementation_t));
-//    if ((status = switch_core_session_get_read_impl(session, &read_impl)) == SWITCH_STATUS_SUCCESS) {
-//        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE,
-//                          "[%s]:  media sampler/s is %d  while ms/p: %d\n",
-//                          switch_core_session_get_uuid(session), read_impl.actual_samples_per_second, read_impl.microseconds_per_packet);
-//    } else {
-//        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING,
-//                          "[%s]: shmed_on_consume_media => switch_core_session_get_read_impl return %d\n",
-//                          switch_core_session_get_uuid(session), status);
-//    }
-//
-//    return SWITCH_STATUS_SUCCESS;
-//}
 
 #define SAMPLE_RATE 8000
 
@@ -281,17 +258,6 @@ static void shmed_hook_session(switch_core_session_t *session) {
                           switch_channel_get_uuid(channel));
         return;
     }
-
-    //  switch_channel_add_state_handler's return value: the index number/priority of the table negative value indicates failure
-    //int idx = 0;
-    //if ((idx = switch_channel_add_state_handler(channel, &session_shmed_handlers)) < 0) {
-    //    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: hook channel state change failed\n",
-    //                      switch_channel_get_uuid(channel));
-    //    return;
-    //} else {
-    //    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "[%s]: switch_channel_add_state_handler return idx %d",
-    //                      switch_core_session_get_uuid(session), idx);
-    //}
 
     switch_codec_implementation_t read_impl;
     memset(&read_impl, 0, sizeof(switch_codec_implementation_t));
