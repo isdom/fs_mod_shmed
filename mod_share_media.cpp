@@ -13,6 +13,14 @@ uint8_t* shm_ptr = nullptr;
 switch_mutex_t *shm_mutex = nullptr;
 int next_block_idx = 0;
 
+const switch_time_t MIN_UPDATE_INTERVAL = 10 * 1000L; // 10 ms
+
+switch_time_t last_update_block_idx_tm = 0;
+
+bool need_update_block_idx(const switch_time_t now_tm) {
+    return !last_update_block_idx_tm || (now_tm - last_update_block_idx_tm >= MIN_UPDATE_INTERVAL);
+}
+
 //======================================== freeswitch module start ===============
 SWITCH_MODULE_LOAD_FUNCTION(mod_shmed_load);
 
@@ -54,12 +62,13 @@ unlock:
     return block_idx;
 }
 
-void update_block_idx(int block_idx) {
+static void update_block_idx(int block_idx, const switch_time_t now) {
     int idx_dup[2];
     switch_mutex_lock(shm_mutex);
     if (block_idx == next_block_idx) {
         idx_dup[0] = idx_dup[1] = block_idx;
         memcpy(shm_ptr, &idx_dup, sizeof(idx_dup));
+        last_update_block_idx_tm = now;
     }
     switch_mutex_unlock(shm_mutex);
 }
@@ -103,7 +112,7 @@ static switch_bool_t handle_read_media_bug(switch_media_bug_t *bug, shmed_bug_t 
         */
 
         switch_time_t now_tm = switch_time_now(); //switch_time_ref(); //switch_micro_time_now();
-        uint16_t size = (uint16_t)(4 + sizeof(switch_time_t) /* timestamp: 8 bytes */ + data_len);
+        auto size = (uint16_t)(4 + sizeof(switch_time_t) /* timestamp: 8 bytes */ + data_len);
         if (size > BLOCK_SIZE - 2) {
             switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: handle_read_media_bug => datalen:%d exceed block size, ignore!\n",
                               switch_channel_get_uuid(channel), size);
@@ -118,8 +127,10 @@ static switch_bool_t handle_read_media_bug(switch_media_bug_t *bug, shmed_bug_t 
             // set local idx for block
             memcpy(data_ptr, &pvt->local_idx, sizeof(int32_t));
 
-            // update the newest block id to 0 block: notify local agent
-            update_block_idx(block_idx);
+            if (need_update_block_idx(now_tm)) {
+                // update the newest block id to 0 block: notify local agent
+                update_block_idx(block_idx, now_tm);
+            }
         } else {
             switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "[%s]: no valid block, drop frame %d bytes\n",
                               switch_channel_get_uuid(channel), data_len);
