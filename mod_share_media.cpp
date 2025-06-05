@@ -16,6 +16,7 @@ int next_block_idx = 0;
 const switch_time_t MIN_UPDATE_INTERVAL = 10 * 1000L; // 10 ms
 
 switch_time_t last_update_block_idx_tm = 0;
+switch_atomic_t allocated_block_count = 0;
 
 bool need_update_block_idx(const switch_time_t now_tm) {
     return !last_update_block_idx_tm || (now_tm - last_update_block_idx_tm >= MIN_UPDATE_INTERVAL);
@@ -37,7 +38,7 @@ int shmed_alloc_block(const uint16_t len, switch_channel_t *channel) {
     switch_mutex_lock(shm_mutex);
     while (try_cnt < BLOCK_COUNT - 1) {
         uint8_t *current = shm_ptr + (next_block_idx + 1) * BLOCK_SIZE;
-        uint16_t data_size = (uint16_t)((current[1] << 8) | current[0]);
+        auto data_size = (uint16_t)((current[1] << 8) | current[0]);
         if (data_size == 0) {
             // set len to block's first 2 bytes as little ending
             current[0] = len & 0xff;
@@ -49,6 +50,7 @@ int shmed_alloc_block(const uint16_t len, switch_channel_t *channel) {
             current[5] = 0x00;
             block_idx = next_block_idx + 1;
             next_block_idx = (next_block_idx + 1) % (BLOCK_COUNT - 1);
+            switch_atomic_inc(&allocated_block_count);
             goto unlock;
         } else {
             try_cnt++;
@@ -68,6 +70,12 @@ static void update_block_idx(int block_idx, const switch_time_t now) {
     if (block_idx == next_block_idx) {
         idx_dup[0] = idx_dup[1] = block_idx;
         memcpy(shm_ptr, &idx_dup, sizeof(idx_dup));
+        if (last_update_block_idx_tm < now) {
+            const auto cnt = (float )switch_atomic_read(&allocated_block_count);
+            switch_atomic_set(&allocated_block_count, 0);
+            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "shmed_alloc_block_speed %f count/ms\n",
+                              cnt * 1000.0f/ (float)(now - last_update_block_idx_tm));
+        }
         last_update_block_idx_tm = now;
     }
     switch_mutex_unlock(shm_mutex);
