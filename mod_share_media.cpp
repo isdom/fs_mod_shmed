@@ -79,8 +79,11 @@ static void update_block_idx(int block_idx, const switch_time_t now) {
             const auto times = (float )switch_atomic_read(&update_idx_times);
             switch_atomic_set(&update_idx_times, 0);
             const float duration_in_ms = ((float)(now - last_log_tm) / 1000.0f);
+            last_log_tm = now;
             switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "shmed_alloc_block_speed: %f count/s, update speed: %f times/s\n",
                               cnt * 1000.0f / duration_in_ms,  times * 1000.0f / duration_in_ms);
+        } else if (last_log_tm == 0) {
+            last_log_tm = now;
         }
         last_update_block_idx_tm = now;
     }
