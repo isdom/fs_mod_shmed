@@ -17,6 +17,8 @@ const switch_time_t MIN_UPDATE_INTERVAL = 10 * 1000L; // 10 ms
 
 switch_time_t last_update_block_idx_tm = 0;
 switch_atomic_t allocated_block_count = 0;
+switch_atomic_t update_idx_times = 0;
+switch_time_t last_log_tm = 0;
 
 bool need_update_block_idx(const switch_time_t now_tm) {
     return !last_update_block_idx_tm || (now_tm - last_update_block_idx_tm >= MIN_UPDATE_INTERVAL);
@@ -70,11 +72,15 @@ static void update_block_idx(int block_idx, const switch_time_t now) {
     if (block_idx == next_block_idx) {
         idx_dup[0] = idx_dup[1] = block_idx;
         memcpy(shm_ptr, &idx_dup, sizeof(idx_dup));
-        if (last_update_block_idx_tm < now) {
+        switch_atomic_inc(&update_idx_times);
+        if (last_log_tm > 0 && now - last_log_tm >= 1000L * 1000L ) { // log interval: 1 s
             const auto cnt = (float )switch_atomic_read(&allocated_block_count);
             switch_atomic_set(&allocated_block_count, 0);
-            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "shmed_alloc_block_speed %f count/ms\n",
-                              cnt * 1000.0f/ (float)(now - last_update_block_idx_tm));
+            const auto times = (float )switch_atomic_read(&update_idx_times);
+            switch_atomic_set(&update_idx_times, 0);
+            const float duration_in_ms = ((float)(now - last_log_tm) / 1000.0f);
+            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "shmed_alloc_block_speed: %f count/s, update speed: %f times/s\n",
+                              cnt * 1000.0f / duration_in_ms,  times * 1000.0f / duration_in_ms);
         }
         last_update_block_idx_tm = now;
     }
