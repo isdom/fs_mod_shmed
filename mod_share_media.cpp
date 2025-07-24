@@ -458,6 +458,61 @@ void dump_event(switch_event_t *event) {
 }
 */
 
+switch_bool_t g_handshake_completed = SWITCH_FALSE;
+switch_time_t g_last_handshake_response = 0;
+const switch_time_t HANDSHAKE_TIMEOUT_MSS = 3000 * 1000LL; // 3秒超时
+
+switch_mutex_t *g_handshake_mutex = nullptr;
+
+SWITCH_STANDARD_SCHED_FUNC(sch_shm_handshake_callback) {
+    switch_assert(task);
+
+    switch_event_t *event = nullptr;
+    if (switch_event_create(&event, SWITCH_EVENT_CUSTOM) == SWITCH_STATUS_SUCCESS) {
+        switch_event_set_subclass_name(event, "shmed::handshake");
+        switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "SHM-Path", "/dev/shm/media_shm");
+        switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "Block-Size", "512");
+        switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "Block-Count", "1048576");
+        switch_event_fire(&event);
+    }
+
+    if (g_handshake_completed) {
+        // 检查是否超时
+        switch_time_t now = switch_time_now();
+        switch_mutex_lock(g_handshake_mutex);
+        if (now - g_last_handshake_response > HANDSHAKE_TIMEOUT_MSS) {
+            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING,
+                              "Peer heartbeat timeout! Last response was %ld ms ago. Disabling SHM.\n",
+                              (now - g_last_handshake_response) / 1000);
+            g_handshake_completed = SWITCH_FALSE;
+        }
+        switch_mutex_unlock(g_handshake_mutex);
+    }
+}
+
+SWITCH_STANDARD_API(shmed_handshake_function) {
+    if (zstr(cmd)) {
+        stream->write_function(stream, "shmed_handshake: parameter missing.\n");
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "shmed_handshake: parameter missing.\n");
+        return SWITCH_STATUS_SUCCESS;
+    }
+
+    if (!strcasecmp(cmd, "ok")) {
+        switch_mutex_lock(g_handshake_mutex);
+        g_handshake_completed = SWITCH_TRUE;
+        g_last_handshake_response = switch_time_now();
+        switch_mutex_unlock(g_handshake_mutex);
+
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "Handshake OK from Peer.\n");
+        stream->write_function(stream, "Handshake accepted.\n");
+    } else {
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "Invalid handshake command: %s\n", cmd);
+        stream->write_function(stream, "Invalid handshake command.\n");
+    }
+
+    return SWITCH_STATUS_SUCCESS;
+}
+
 /**
  *  定义load函数，加载时运行
  */
@@ -493,6 +548,12 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_shmed_load) {
                    mod_shmed_enable,
                    SHMED_ENABLE_SYNTAX);
 
+    SWITCH_ADD_API(api_interface,
+                   "shmed_handshake",
+                   "Receive handshake response from Peer",
+                   shmed_handshake_function,
+                   "<ok>");
+
     switch_mutex_init(&shm_mutex, SWITCH_MUTEX_NESTED, pool);
 
     // 保存当前进程的 umask
@@ -519,6 +580,13 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_shmed_load) {
 
     }
 
+    // 初始化握手互斥锁
+    switch_mutex_init(&g_handshake_mutex, SWITCH_MUTEX_NESTED, pool);
+
+    // 启动定时握手任务
+    switch_scheduler_add_task(1, sch_shm_handshake_callback,
+                              "sch_shm_handshake_callback", nullptr, 0, nullptr, SSHF_NONE);
+
     switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "mod_shmed loaded\n");
 
     return SWITCH_STATUS_SUCCESS;
@@ -529,6 +597,12 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_shmed_load) {
  */
 SWITCH_MODULE_SHUTDOWN_FUNCTION(mod_shmed_shutdown) {
     switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, " mod_shmed shutdown called\n");
+
+    // 销毁握手互斥锁
+    if (g_handshake_mutex) {
+        switch_mutex_destroy(g_handshake_mutex);
+        g_handshake_mutex = nullptr;
+    }
 
     // unregister global state handlers
     switch_core_remove_state_handler(&session_shmed_handlers);
