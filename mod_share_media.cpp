@@ -20,6 +20,12 @@ switch_atomic_t allocated_block_count = 0;
 switch_atomic_t update_idx_times = 0;
 switch_time_t last_log_tm = 0;
 
+switch_bool_t g_handshake_completed = SWITCH_FALSE;
+switch_time_t g_last_handshake_response = 0;
+const switch_time_t HANDSHAKE_TIMEOUT_MSS = 3000 * 1000LL; // 3秒超时
+
+switch_mutex_t *g_handshake_mutex = nullptr;
+
 bool need_update_block_idx(const switch_time_t now_tm) {
     return !last_update_block_idx_tm || (now_tm - last_update_block_idx_tm >= MIN_UPDATE_INTERVAL);
 }
@@ -340,14 +346,14 @@ static void shmed_hook_session(switch_core_session_t *session) {
 }
 
 static void on_event_codec(switch_event_t *event) {
-    if (g_shm_enable) {
-        switch_event_header_t *hdr;
-        const char *uuid;
+    switch_event_header_t *hdr;
+    const char *uuid;
 
-        hdr = switch_event_get_header_ptr(event, "Unique-ID");
-        uuid = hdr->value;
-        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "on_event_codec: uuid: %s", uuid);
+    hdr = switch_event_get_header_ptr(event, "Unique-ID");
+    uuid = hdr->value;
+    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "on_event_codec: uuid: %s", uuid);
 
+    if (g_shm_enable && g_handshake_completed) {
         switch_core_session *session  = switch_core_session_force_locate(uuid);
         if (!session) {
             switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "on_event_codec: locate session [%s] failed, maybe ended\n",
@@ -356,6 +362,9 @@ static void on_event_codec(switch_event_t *event) {
             shmed_hook_session(session);
             switch_core_session_rwunlock(session);
         }
+    } else {
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "on_event_codec: shm disabled, [%s]'s media ignored!\n",
+                          uuid);
     }
 }
 
@@ -457,12 +466,6 @@ void dump_event(switch_event_t *event) {
     switch_safe_free(buf);
 }
 */
-
-switch_bool_t g_handshake_completed = SWITCH_FALSE;
-switch_time_t g_last_handshake_response = 0;
-const switch_time_t HANDSHAKE_TIMEOUT_MSS = 3000 * 1000LL; // 3秒超时
-
-switch_mutex_t *g_handshake_mutex = nullptr;
 
 SWITCH_STANDARD_SCHED_FUNC(sch_shm_handshake_callback) {
     switch_assert(task);
