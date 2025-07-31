@@ -506,7 +506,7 @@ SWITCH_STANDARD_API(shmed_handshake_function) {
         g_last_handshake_response = switch_time_now();
         switch_mutex_unlock(g_handshake_mutex);
 
-        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "Handshake OK from Peer.\n");
+        // switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "Handshake OK from Peer.\n");
         stream->write_function(stream, "Handshake accepted.\n");
     } else {
         switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "Invalid handshake command: %s\n", cmd);
